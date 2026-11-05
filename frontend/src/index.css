@@ -1,0 +1,38 @@
+/* Temporary styles for the setup page. */
+:root {
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  color: #33291f;
+  background: #f6e8d2;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+.app {
+  position: relative;
+  height: 100%;
+}
+
+/* Text panel shown on top of the 3D scene */
+.overlay {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 85%);
+}
+
+.overlay h1 {
+  margin: 0 0 4px;
+  font-size: 24px;
+}
+
+.status-badge {
+  margin: 0;
+  font-size: 14px;
+}
