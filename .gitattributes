@@ -4,6 +4,7 @@
 # Binary files: never change their bytes.
 *.glb binary
 *.gltf binary
+*.bin binary
 *.png binary
 *.jpg binary
 *.jpeg binary

@@ -1,0 +1,7 @@
+These models and their texture come from the KayKit Medieval Hexagon Pack 1.0
+by Kay Lousberg (www.kaylousberg.com).
+
+Licence: CC0 1.0 (public domain). See LICENSE.txt in this folder.
+Source: https://github.com/KayKit-Game-Assets/KayKit-Medieval-Hexagon-Pack-1.0
+Version: commit 84fa4e91af6a88989be7c99e0891cede11f2ca38
+Files used: the glTF versions of each model, unmodified, plus the shared texture.
