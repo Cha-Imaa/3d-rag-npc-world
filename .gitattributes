@@ -1,0 +1,12 @@
+# Store text files with LF line endings so Windows and CI stay consistent.
+* text=auto eol=lf
+
+# Binary files: never change their bytes.
+*.glb binary
+*.gltf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.pdf binary
+*.ico binary
