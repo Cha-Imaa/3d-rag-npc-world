@@ -1,4 +1,4 @@
-/* Temporary styles for the setup page. */
+/* Page layout and the text shown on top of the 3D scene. */
 :root {
   font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
   color: #33291f;
@@ -35,4 +35,63 @@ body,
 .status-badge {
   margin: 0;
   font-size: 14px;
+}
+
+/* First-visit tip, centered near the bottom of the scene */
+.first-visit-hint {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 16px;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 90%);
+  transform: translateX(-50%);
+}
+
+.first-visit-hint p {
+  margin: 0;
+}
+
+.first-visit-hint button {
+  padding: 4px 12px;
+  border: 0;
+  border-radius: 6px;
+  font: inherit;
+  color: #fff;
+  background: #7a5230;
+  cursor: pointer;
+}
+
+/* Download progress, centered over the scene */
+.scene-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  padding: 10px 16px;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 90%);
+  transform: translate(-50%, -50%);
+}
+
+/* Shown in place of the scene when it cannot be displayed */
+.scene-fallback {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 0 16px;
+  text-align: center;
+}
+
+.scene-fallback h2 {
+  margin: 0 0 8px;
+}
+
+.scene-fallback p {
+  max-width: 480px;
+  margin: 0;
 }
