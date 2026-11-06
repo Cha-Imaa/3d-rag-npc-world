@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { CONFIGURED_NPC_SPOTS } from './configuredNpcSpots'
 import { BRIDGE_TILE, hexToWorld, VILLAGE_PIECES, type VillageModel } from './villageLayout'
 import {
   BRIDGE_HALF_WIDTH,
@@ -6,20 +7,26 @@ import {
   closeUpShot,
   facingAngle,
   groundHeight,
+  hexToPoint,
   isSpotFree,
   moveWithSliding,
   nearestNpcInRange,
-  NPC_POINTS,
   START_POINT,
   TALKING_RANGE,
   turnToward,
-  VILLAGE_FOOTPRINTS,
   walkDirection,
   WALK_SPEED,
   type GroundPoint,
 } from './walking'
 
 const [BRIDGE_X, BRIDGE_Z] = hexToWorld(BRIDGE_TILE)
+
+/** These come from the real NPC files, so a new NPC is covered by every test below. */
+const NPC_POINTS = CONFIGURED_NPC_SPOTS.map(hexToPoint)
+const VILLAGE_FOOTPRINTS = buildFootprints(VILLAGE_PIECES, NPC_POINTS)
+
+/** Check a spot in the real village. */
+const isVillageSpotFree = (point: GroundPoint) => isSpotFree(point, VILLAGE_FOOTPRINTS)
 
 /** Models that are meant to block nothing. */
 const MODELS_THAT_BLOCK_NOTHING: VillageModel[] = [
@@ -40,7 +47,7 @@ function walk(from: GroundPoint, direction: GroundPoint, seconds: number): Groun
   let position = from
 
   for (let frame = 0; frame < seconds * framesPerSecond; frame += 1) {
-    position = moveWithSliding(position, step)
+    position = moveWithSliding(position, step, VILLAGE_FOOTPRINTS)
   }
 
   return position
@@ -65,7 +72,7 @@ function findReachablePoints(): GroundPoint[] {
     const [column, row] = waiting.pop()!
     const key = `${column},${row}`
 
-    if (!visited.has(key) && isSpotFree(pointAt(column, row))) {
+    if (!visited.has(key) && isVillageSpotFree(pointAt(column, row))) {
       visited.add(key)
       reachable.push(pointAt(column, row))
       waiting.push([column + 1, row], [column - 1, row], [column, row + 1], [column, row - 1])
@@ -91,28 +98,28 @@ describe('footprints', () => {
 
 describe('where the visitor may stand', () => {
   it('starts on a free spot', () => {
-    expect(isSpotFree(START_POINT)).toBe(true)
+    expect(isVillageSpotFree(START_POINT)).toBe(true)
   })
 
   it('blocks buildings, NPCs, the river, and the sea', () => {
     const [tavernX, tavernZ] = hexToWorld({ q: -1, r: -1 })
     const [riverX, riverZ] = hexToWorld({ q: 4, r: -1 })
 
-    expect(isSpotFree({ x: tavernX, z: tavernZ })).toBe(false)
-    expect(isSpotFree(NPC_POINTS[0])).toBe(false)
-    expect(isSpotFree({ x: riverX, z: riverZ })).toBe(false)
-    expect(isSpotFree({ x: -30, z: 0 })).toBe(false)
+    expect(isVillageSpotFree({ x: tavernX, z: tavernZ })).toBe(false)
+    expect(isVillageSpotFree(NPC_POINTS[0])).toBe(false)
+    expect(isVillageSpotFree({ x: riverX, z: riverZ })).toBe(false)
+    expect(isVillageSpotFree({ x: -30, z: 0 })).toBe(false)
   })
 
   it('allows only the deck on the bridge tile', () => {
-    expect(isSpotFree({ x: BRIDGE_X, z: BRIDGE_Z })).toBe(true)
-    expect(isSpotFree({ x: BRIDGE_X, z: BRIDGE_Z + BRIDGE_HALF_WIDTH + 0.05 })).toBe(false)
+    expect(isVillageSpotFree({ x: BRIDGE_X, z: BRIDGE_Z })).toBe(true)
+    expect(isVillageSpotFree({ x: BRIDGE_X, z: BRIDGE_Z + BRIDGE_HALF_WIDTH + 0.05 })).toBe(false)
   })
 })
 
 describe('moveWithSliding', () => {
   it('moves freely on open ground', () => {
-    expect(moveWithSliding(START_POINT, { x: 0.1, z: 0 })).toEqual({
+    expect(moveWithSliding(START_POINT, { x: 0.1, z: 0 }, VILLAGE_FOOTPRINTS)).toEqual({
       x: START_POINT.x + 0.1,
       z: START_POINT.z,
     })
@@ -135,8 +142,8 @@ describe('moveWithSliding', () => {
     const start = { x: 6.2, z: -0.5 }
     const end = walk(start, { x: 0.7, z: -0.7 }, 2)
 
-    expect(isSpotFree(start)).toBe(true)
-    expect(isSpotFree(end)).toBe(true)
+    expect(isVillageSpotFree(start)).toBe(true)
+    expect(isVillageSpotFree(end)).toBe(true)
     expect(Math.hypot(end.x - start.x, end.z - start.z)).toBeGreaterThan(0.3)
   })
 
@@ -150,7 +157,7 @@ describe('moveWithSliding', () => {
     const end = walk(START_POINT, { x: -1, z: 0 }, 5)
 
     expect(end.x).toBeLessThan(START_POINT.x)
-    expect(isSpotFree(end)).toBe(true)
+    expect(isVillageSpotFree(end)).toBe(true)
   })
 
   it('crosses the bridge by walking straight along the road', () => {

@@ -7,7 +7,7 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-/** Add a text box to the page, as the chat panel will. */
+/** Add a text box to the page, as the chat panel does. */
 function addTextBox(): HTMLInputElement {
   const textBox = document.createElement('input')
   document.body.append(textBox)
@@ -61,18 +61,26 @@ describe('useHeldKeys', () => {
 })
 
 describe('useTalkingKeys', () => {
-  it('talks to the nearby character when E is pressed', () => {
+  it('talks to the nearby NPC when E is pressed', () => {
     const onTalk = vi.fn()
-    renderHook(() => useTalkingKeys({ nearbyCharacter: 2, onTalk, onStopTalking: vi.fn() }))
+    renderHook(() => useTalkingKeys({ nearbyNpcId: 'test-npc', onTalk, onStopTalking: vi.fn() }))
 
     fireEvent.keyDown(window, { code: 'KeyE' })
 
-    expect(onTalk).toHaveBeenCalledWith(2)
+    expect(onTalk).toHaveBeenCalledWith('test-npc')
+  })
+
+  it('keeps the E that starts a conversation out of the chat box', () => {
+    const onTalk = vi.fn()
+    renderHook(() => useTalkingKeys({ nearbyNpcId: 'test-npc', onTalk, onStopTalking: vi.fn() }))
+
+    // fireEvent returns false when the key's normal effect was cancelled.
+    expect(fireEvent.keyDown(window, { code: 'KeyE' })).toBe(false)
   })
 
   it('does nothing on E when nobody is nearby', () => {
     const onTalk = vi.fn()
-    renderHook(() => useTalkingKeys({ nearbyCharacter: null, onTalk, onStopTalking: vi.fn() }))
+    renderHook(() => useTalkingKeys({ nearbyNpcId: null, onTalk, onStopTalking: vi.fn() }))
 
     fireEvent.keyDown(window, { code: 'KeyE' })
 
@@ -81,7 +89,7 @@ describe('useTalkingKeys', () => {
 
   it('does not treat a typed letter e as talking', () => {
     const onTalk = vi.fn()
-    renderHook(() => useTalkingKeys({ nearbyCharacter: 0, onTalk, onStopTalking: vi.fn() }))
+    renderHook(() => useTalkingKeys({ nearbyNpcId: 'test-npc', onTalk, onStopTalking: vi.fn() }))
 
     fireEvent.keyDown(addTextBox(), { code: 'KeyE' })
 
@@ -90,7 +98,7 @@ describe('useTalkingKeys', () => {
 
   it('stops talking with Escape, even from a text field', () => {
     const onStopTalking = vi.fn()
-    renderHook(() => useTalkingKeys({ nearbyCharacter: 0, onTalk: vi.fn(), onStopTalking }))
+    renderHook(() => useTalkingKeys({ nearbyNpcId: 'test-npc', onTalk: vi.fn(), onStopTalking }))
 
     fireEvent.keyDown(addTextBox(), { code: 'Escape' })
 

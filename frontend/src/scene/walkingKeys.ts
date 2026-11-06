@@ -60,16 +60,16 @@ export function useHeldKeys(): RefObject<Set<string>> {
 }
 
 type TalkingKeysOptions = {
-  nearbyCharacter: number | null
-  onTalk: (character: number) => void
+  nearbyNpcId: string | null
+  onTalk: (npcId: string) => void
   onStopTalking: () => void
 }
 
 /**
  * Start talking with E and stop with Escape.
- * Input: the character in talking range, and what to run for each key.
+ * Input: the NPC in talking range, and what to run for each key.
  */
-export function useTalkingKeys({ nearbyCharacter, onTalk, onStopTalking }: TalkingKeysOptions) {
+export function useTalkingKeys({ nearbyNpcId, onTalk, onStopTalking }: TalkingKeysOptions) {
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.code === 'Escape') {
@@ -79,13 +79,15 @@ export function useTalkingKeys({ nearbyCharacter, onTalk, onStopTalking }: Talki
 
       const isTalkKey = event.code === 'KeyE' && !event.repeat
 
-      if (isTalkKey && nearbyCharacter !== null && !isTypingTarget(event.target)) {
-        onTalk(nearbyCharacter)
+      if (isTalkKey && nearbyNpcId !== null && !isTypingTarget(event.target)) {
+        // The chat box takes focus straight away, and would otherwise receive this letter e.
+        event.preventDefault()
+        onTalk(nearbyNpcId)
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
 
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [nearbyCharacter, onTalk, onStopTalking])
+  }, [nearbyNpcId, onTalk, onStopTalking])
 }

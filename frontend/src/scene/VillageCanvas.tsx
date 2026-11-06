@@ -6,41 +6,23 @@ import { Village } from './Village'
 import { VillageCamera } from './VillageCamera'
 import { VillageLighting } from './VillageLighting'
 import { VisitorCharacter } from './VisitorCharacter'
-import {
-  facingAngle,
-  NPC_POINTS,
-  START_CAMERA_POSITION,
-  START_POINT,
-  type VisitorState,
-} from './walking'
+import { facingAngle, START_CAMERA_POSITION, START_POINT, type VisitorState } from './walking'
 
 const SKY_COLOR = '#f6e0c4'
 
-type VillageCanvasProps = {
-  nearbyCharacter: number | null
-  talkingCharacter: number | null
-  onNearbyCharacterChange: (character: number | null) => void
-  onTalk: (character: number) => void
-  onFirstWalk: () => void
-}
+/** The visitor first looks toward the middle of the island. */
+const VILLAGE_CENTER = { x: 0, z: 0 }
 
 /**
- * The 3D view of the village.
- * Input: the NPC in talking range and the NPC being talked to, plus functions to run when
- * the NPC in range changes, the visitor clicks a nearby NPC, or the visitor first walks.
+ * The 3D view of the village. NPC details come from the shared store.
+ * Input: a function to run when the visitor first walks.
  */
-export function VillageCanvas({
-  nearbyCharacter,
-  talkingCharacter,
-  onNearbyCharacterChange,
-  onTalk,
-  onFirstWalk,
-}: VillageCanvasProps) {
+export function VillageCanvas({ onFirstWalk }: { onFirstWalk: () => void }) {
   // The live position lives in a ref because it changes on every frame, too often for React state.
   const visitor = useRef<VisitorState>({
     ...START_POINT,
     height: 0,
-    facing: facingAngle(START_POINT, NPC_POINTS[0]),
+    facing: facingAngle(START_POINT, VILLAGE_CENTER),
   })
 
   /** Change the live position. VisitorCharacter calls this on each frame, never during render. */
@@ -60,22 +42,15 @@ export function VillageCanvas({
       {/* The loading overlay outside the canvas shows progress while models download. */}
       <Suspense fallback={null}>
         <Village />
-        <NpcPlaceholders
-          visitor={visitor}
-          nearbyCharacter={nearbyCharacter}
-          talkingCharacter={talkingCharacter}
-          onTalk={onTalk}
-        />
+        <NpcPlaceholders visitor={visitor} />
         <VisitorCharacter
           visitor={visitor}
           updateVisitor={updateVisitor}
-          talkingCharacter={talkingCharacter}
           onFirstWalk={onFirstWalk}
-          onNearbyCharacterChange={onNearbyCharacterChange}
         />
       </Suspense>
 
-      <VillageCamera visitor={visitor} talkingCharacter={talkingCharacter} />
+      <VillageCamera visitor={visitor} />
     </Canvas>
   )
 }

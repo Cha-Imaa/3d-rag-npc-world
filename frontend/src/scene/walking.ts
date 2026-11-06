@@ -8,9 +8,7 @@ import {
   hexToWorld,
   ISLAND_RADIUS,
   isOnIsland,
-  NPC_SPOTS,
   RIVER_TILES,
-  VILLAGE_PIECES,
   worldToHex,
   type HexCoordinate,
   type VillageModel,
@@ -110,7 +108,7 @@ const PIECE_RADII: Partial<Record<VillageModel, number>> = {
 }
 
 /** Convert a grid position to a ground point. */
-function hexToPoint(hex: HexCoordinate): GroundPoint {
+export function hexToPoint(hex: HexCoordinate): GroundPoint {
   const [x, z] = hexToWorld(hex)
   return { x, z }
 }
@@ -124,9 +122,6 @@ const BRIDGE_CENTER = hexToPoint(BRIDGE_TILE)
 const BLOCKED_WATER_TILES = new Set(
   RIVER_TILES.map(hexKey).filter((key) => key !== hexKey(BRIDGE_TILE)),
 )
-
-/** Where each NPC stands, in the same order as NPC_SPOTS. */
-export const NPC_POINTS: GroundPoint[] = NPC_SPOTS.map(hexToPoint)
 
 /** The visitor starts on the road near the west end, with the village ahead of them. */
 export const START_POINT: GroundPoint = hexToPoint({ q: -4, r: 0 })
@@ -159,8 +154,6 @@ export function buildFootprints(pieces: VillagePiece[], npcPoints: GroundPoint[]
 
   return [...pieceFootprints, ...npcFootprints]
 }
-
-export const VILLAGE_FOOTPRINTS = buildFootprints(VILLAGE_PIECES, NPC_POINTS)
 
 /** Check that a point is on the island and not on a river tile. */
 function isDryLand(point: GroundPoint): boolean {
@@ -212,7 +205,7 @@ function isClearOfFootprints(point: GroundPoint, footprints: Footprint[]): boole
  * Check whether the visitor may stand somewhere.
  * Input: where their center would be, and the solid circles. Output: true if the spot is free.
  */
-export function isSpotFree(point: GroundPoint, footprints = VILLAGE_FOOTPRINTS): boolean {
+export function isSpotFree(point: GroundPoint, footprints: Footprint[]): boolean {
   return isSpotOnGround(point) && isClearOfFootprints(point, footprints)
 }
 
@@ -249,7 +242,7 @@ function pushOutOfFootprints(point: GroundPoint, footprints: Footprint[]): Groun
 export function moveWithSliding(
   from: GroundPoint,
   step: GroundPoint,
-  footprints = VILLAGE_FOOTPRINTS,
+  footprints: Footprint[],
 ): GroundPoint {
   const attempts: GroundPoint[] = [
     { x: from.x + step.x, z: from.z + step.z },
@@ -359,7 +352,7 @@ export function turnToward(current: number, target: number, largestTurn: number)
  */
 export function nearestNpcInRange(
   visitor: GroundPoint,
-  npcPoints = NPC_POINTS,
+  npcPoints: GroundPoint[],
 ): number | null {
   let nearestNpc: number | null = null
   let nearestDistance = TALKING_RANGE

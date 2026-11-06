@@ -216,16 +216,6 @@ export const VILLAGE_PIECES: VillagePiece[] = [
 ]
 
 /**
- * Where the neutral NPC placeholders stand. Which NPC uses which spot is not decided,
- * so this list only holds positions and never refers to a specific NPC.
- */
-export const NPC_SPOTS: HexCoordinate[] = [
-  { q: -2, r: 0 },
-  { q: 0, r: 1 },
-  { q: 2, r: 0 },
-]
-
-/**
  * Convert a grid position to a position in the 3D scene.
  * Input: a hexagon's q and r. Output: its center as [x, z]. The center tile is at [0, 0].
  */

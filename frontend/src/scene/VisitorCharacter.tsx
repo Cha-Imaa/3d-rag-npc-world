@@ -1,14 +1,17 @@
 import { useFrame } from '@react-three/fiber'
-import { useRef, useState, type RefObject } from 'react'
+import { useMemo, useRef, useState, type RefObject } from 'react'
 import { Vector3, type Group } from 'three'
+import { selectTalkingNpc, useVillageStore } from '../store'
 import { PlaceholderBody } from './PlaceholderBody'
+import { VILLAGE_PIECES } from './villageLayout'
 import { prefersReducedMotion } from './villageMotion'
 import {
+  buildFootprints,
   facingAngle,
   groundHeight,
+  hexToPoint,
   moveWithSliding,
   nearestNpcInRange,
-  NPC_POINTS,
   TURN_SPEED,
   turnToward,
   walkDirection,
@@ -25,30 +28,33 @@ const LONGEST_STEP_SECONDS = 0.05
 type VisitorCharacterProps = {
   visitor: RefObject<VisitorState>
   updateVisitor: (changes: Partial<VisitorState>) => void
-  talkingCharacter: number | null
   onFirstWalk: () => void
-  onNearbyCharacterChange: (character: number | null) => void
 }
 
 /**
  * The small character the visitor controls.
  * Input: visitor holds the live position, shared with the camera and NPCs, and updateVisitor
- * changes it. talkingCharacter stops walking while set. onFirstWalk runs once, on the first
- * step. onNearbyCharacterChange runs when a different NPC comes into talking range.
+ * changes it. onFirstWalk runs once, on the first step. Walking stops during a conversation.
  */
 export function VisitorCharacter({
   visitor,
   updateVisitor,
-  talkingCharacter,
   onFirstWalk,
-  onNearbyCharacterChange,
 }: VisitorCharacterProps) {
+  const npcs = useVillageStore((state) => state.npcs)
+  const talkingNpc = useVillageStore(selectTalkingNpc)
+  const setNearbyNpc = useVillageStore((state) => state.setNearbyNpc)
+
+  // NPCs arrive from the backend after the scene starts, so these are rebuilt when they do.
+  const npcPoints = useMemo(() => npcs.map((npc) => hexToPoint(npc.scene_position)), [npcs])
+  const footprints = useMemo(() => buildFootprints(VILLAGE_PIECES, npcPoints), [npcPoints])
+
   const groupRef = useRef<Group>(null)
   const heldKeys = useHeldKeys()
   const [isMotionOn] = useState(() => !prefersReducedMotion())
 
   const hasWalked = useRef(false)
-  const lastNearbyCharacter = useRef<number | null>(null)
+  const lastNearbyNpcId = useRef<string | null>(null)
   const targetFacing = useRef(visitor.current.facing)
   const cameraDirection = useRef(new Vector3())
 
@@ -63,7 +69,7 @@ export function VisitorCharacter({
     const distance = WALK_SPEED * seconds
     const step = { x: direction.x * distance, z: direction.z * distance }
 
-    updateVisitor(moveWithSliding(visitor.current, step))
+    updateVisitor(moveWithSliding(visitor.current, step, footprints))
     targetFacing.current = facingAngle({ x: 0, z: 0 }, direction)
 
     if (!hasWalked.current) {
@@ -73,24 +79,25 @@ export function VisitorCharacter({
   }
 
   /** Tell the app when the NPC in talking range changes. */
-  function reportNearbyCharacter() {
-    const nearbyCharacter = nearestNpcInRange(visitor.current)
+  function reportNearbyNpc() {
+    const nearbyIndex = nearestNpcInRange(visitor.current, npcPoints)
+    const nearbyNpcId = nearbyIndex === null ? null : npcs[nearbyIndex].id
 
-    if (nearbyCharacter !== lastNearbyCharacter.current) {
-      lastNearbyCharacter.current = nearbyCharacter
-      onNearbyCharacterChange(nearbyCharacter)
+    if (nearbyNpcId !== lastNearbyNpcId.current) {
+      lastNearbyNpcId.current = nearbyNpcId
+      setNearbyNpc(nearbyNpcId)
     }
   }
 
   useFrame(({ camera }, frameSeconds) => {
     const seconds = Math.min(frameSeconds, LONGEST_STEP_SECONDS)
 
-    if (talkingCharacter === null) {
+    if (talkingNpc) {
+      targetFacing.current = facingAngle(visitor.current, hexToPoint(talkingNpc.scene_position))
+    } else {
       camera.getWorldDirection(cameraDirection.current)
       walkOneStep(cameraDirection.current, seconds)
-      reportNearbyCharacter()
-    } else {
-      targetFacing.current = facingAngle(visitor.current, NPC_POINTS[talkingCharacter])
+      reportNearbyNpc()
     }
 
     updateVisitor({

@@ -2,14 +2,9 @@ import { OrbitControls } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
 import { useRef, useState, type ComponentRef, type RefObject } from 'react'
 import { Vector3 } from 'three'
+import { selectTalkingNpc, useVillageStore } from '../store'
 import { prefersReducedMotion } from './villageMotion'
-import {
-  closeUpShot,
-  NPC_POINTS,
-  START_POINT,
-  type CameraShot,
-  type VisitorState,
-} from './walking'
+import { closeUpShot, hexToPoint, START_POINT, type CameraShot, type VisitorState } from './walking'
 
 /** The camera looks at this height above the visitor's feet. */
 const FOCUS_HEIGHT = 0.4
@@ -26,17 +21,13 @@ const START_FOCUS: [x: number, y: number, z: number] = [START_POINT.x, FOCUS_HEI
 /** What the camera is doing: following the visitor, in close-up, or gliding back from one. */
 type CameraMode = 'following' | 'closeUp' | 'returning'
 
-type VillageCameraProps = {
-  visitor: RefObject<VisitorState>
-  talkingCharacter: number | null
-}
-
 /**
  * The third-person camera. Dragging and zooming work through the orbit controls, whose
  * focus point follows the visitor. While talking, the controls pause for a closer view.
- * Input: visitor holds the live position, and talkingCharacter is the NPC being talked to.
+ * Input: visitor holds the live position.
  */
-export function VillageCamera({ visitor, talkingCharacter }: VillageCameraProps) {
+export function VillageCamera({ visitor }: { visitor: RefObject<VisitorState> }) {
+  const talkingNpc = useVillageStore(selectTalkingNpc)
   const controlsRef = useRef<ComponentRef<typeof OrbitControls>>(null)
   const [isMotionOn] = useState(() => !prefersReducedMotion())
 
@@ -60,16 +51,17 @@ export function VillageCamera({ visitor, talkingCharacter }: VillageCameraProps)
     focus.current.set(x, height + FOCUS_HEIGHT, z)
 
     // Start a close-up, or leave one, when the conversation starts or ends.
-    if (talkingCharacter !== null && mode.current !== 'closeUp') {
+    if (talkingNpc && mode.current !== 'closeUp') {
       // Coming back mid-glide keeps the offset saved earlier, not the half-finished view.
       if (mode.current === 'following') {
         savedOffset.current.copy(camera.position).sub(controls.target)
       }
 
       const cameraPoint = { x: camera.position.x, z: camera.position.z }
-      shot.current = closeUpShot(visitor.current, NPC_POINTS[talkingCharacter], cameraPoint)
+      const npcPoint = hexToPoint(talkingNpc.scene_position)
+      shot.current = closeUpShot(visitor.current, npcPoint, cameraPoint)
       mode.current = 'closeUp'
-    } else if (talkingCharacter === null && mode.current === 'closeUp') {
+    } else if (!talkingNpc && mode.current === 'closeUp') {
       mode.current = 'returning'
     }
 
@@ -106,7 +98,7 @@ export function VillageCamera({ visitor, talkingCharacter }: VillageCameraProps)
     <OrbitControls
       ref={controlsRef}
       target={START_FOCUS}
-      enabled={talkingCharacter === null}
+      enabled={!talkingNpc}
       enablePan={false}
       minDistance={2.5}
       maxDistance={16}

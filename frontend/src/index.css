@@ -86,29 +86,79 @@ body,
   background: #7a5230;
 }
 
-/* Which character is being talked to, in the top right so it never covers the first-visit tip */
-.selected-character {
+/* Why nobody is in the village, in the top right so it never covers the first-visit tip */
+.npc-list-notice {
   position: absolute;
   top: 16px;
   right: 16px;
-  display: flex;
-  gap: 16px;
-  align-items: center;
+  max-width: 260px;
+  margin: 0;
   padding: 10px 16px;
   border-radius: 8px;
   background: rgb(255 255 255 / 90%);
 }
 
-.selected-character h2 {
-  margin: 0;
-  font-size: 1rem;
+.npc-list-notice p {
+  margin: 0 0 8px;
 }
 
-.selected-character p {
-  margin: 0;
+/* The conversation, down the right side so the village stays visible beside it */
+.chat-panel {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  bottom: 16px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 340px;
+  padding: 16px;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 92%);
 }
 
-.selected-character button {
+.chat-panel-header {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.chat-panel-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+/* Takes the spare height, which pushes the message box to the bottom of the panel */
+.chat-panel-empty {
+  flex: 1;
+  margin: 0;
+  color: #6b5d4f;
+}
+
+.chat-panel-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-panel-form label {
+  font-size: 14px;
+}
+
+.chat-panel-form textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #b9a78f;
+  border-radius: 6px;
+  font: inherit;
+  resize: none;
+}
+
+.npc-list-notice button,
+.chat-panel button {
   padding: 4px 12px;
   border: 0;
   border-radius: 6px;
@@ -116,6 +166,31 @@ body,
   color: #fff;
   background: #7a5230;
   cursor: pointer;
+}
+
+.chat-panel-form button {
+  align-self: flex-end;
+}
+
+.chat-panel-form button:disabled {
+  background: #b9a78f;
+  cursor: not-allowed;
+}
+
+.chat-panel-note {
+  margin: 0;
+  font-size: 14px;
+  color: #6b5d4f;
+}
+
+/* On narrow screens the panel sits along the bottom, with the village above it */
+@media (max-width: 640px) {
+  .chat-panel {
+    top: auto;
+    left: 16px;
+    width: auto;
+    height: 50%;
+  }
 }
 
 /* Download progress, centered over the scene */

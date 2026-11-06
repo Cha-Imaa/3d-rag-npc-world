@@ -2,11 +2,12 @@ import { useCursor } from '@react-three/drei'
 import { useFrame, type ThreeEvent } from '@react-three/fiber'
 import { useRef, useState, type RefObject } from 'react'
 import type { Group } from 'three'
+import { useVillageStore } from '../store'
 import { PlaceholderBody } from './PlaceholderBody'
 import { prefersReducedMotion } from './villageMotion'
 import {
   facingAngle,
-  NPC_POINTS,
+  hexToPoint,
   TURN_SPEED,
   turnToward,
   type GroundPoint,
@@ -99,34 +100,26 @@ function NpcPlaceholder({ point, visitor, isInRange, isTalking, onTalk }: NpcPla
   )
 }
 
-type NpcPlaceholdersProps = {
-  visitor: RefObject<VisitorState>
-  nearbyCharacter: number | null
-  talkingCharacter: number | null
-  onTalk: (character: number) => void
-}
-
 /**
- * Neutral stand-ins for NPCs. The final characters and their looks are not decided yet.
- * Input: visitor holds the live position. nearbyCharacter and talkingCharacter are positions
- * in NPC_POINTS, or null for none. onTalk runs with that position when a nearby NPC is clicked.
+ * Neutral stand-ins for the NPCs in the shared store. The final looks are not decided yet.
+ * Input: visitor holds the live position.
  */
-export function NpcPlaceholders({
-  visitor,
-  nearbyCharacter,
-  talkingCharacter,
-  onTalk,
-}: NpcPlaceholdersProps) {
+export function NpcPlaceholders({ visitor }: { visitor: RefObject<VisitorState> }) {
+  const npcs = useVillageStore((state) => state.npcs)
+  const nearbyNpcId = useVillageStore((state) => state.nearbyNpcId)
+  const talkingNpcId = useVillageStore((state) => state.talkingNpcId)
+  const startTalking = useVillageStore((state) => state.startTalking)
+
   return (
     <group>
-      {NPC_POINTS.map((point, character) => (
+      {npcs.map((npc) => (
         <NpcPlaceholder
-          key={`${point.x},${point.z}`}
-          point={point}
+          key={npc.id}
+          point={hexToPoint(npc.scene_position)}
           visitor={visitor}
-          isInRange={nearbyCharacter === character}
-          isTalking={talkingCharacter === character}
-          onTalk={() => onTalk(character)}
+          isInRange={nearbyNpcId === npc.id}
+          isTalking={talkingNpcId === npc.id}
+          onTalk={() => startTalking(npc.id)}
         />
       ))}
     </group>
