@@ -9,7 +9,7 @@ from fastapi import Depends, FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from app.chat import LLM_ERROR_MESSAGES, ChatRequest, ChatResponse
+from app.chat import LLM_ERROR_MESSAGES, ChatRequest, ChatResponse, build_instructions
 from app.llm import ChatMessage, FakeLlm, LlmError, OpenAiLlm, create_llm
 from app.npcs import NpcConfig, PublicNpc, find_enabled_npc, list_public_npcs, load_npcs
 from app.settings import Settings
@@ -129,6 +129,6 @@ def send_chat_message(
 
     # Only the new message for now. Earlier messages are added once they are saved.
     messages = [ChatMessage(role="user", content=chat_request.message)]
-    reply = llm.generate_reply(npc.personality_instructions, messages)
+    reply = llm.generate_reply(build_instructions(npc), messages)
 
     return ChatResponse(answer=reply.answer)

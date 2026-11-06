@@ -6,7 +6,13 @@ from typing import get_args
 import pytest
 from fastapi.testclient import TestClient
 
-from app.chat import LLM_ERROR_MESSAGES, MAX_MESSAGE_CHARACTERS, MAX_NPC_ID_CHARACTERS
+from app.chat import (
+    LLM_ERROR_MESSAGES,
+    MAX_MESSAGE_CHARACTERS,
+    MAX_NPC_ID_CHARACTERS,
+    SHARED_RULES,
+    build_instructions,
+)
 from app.llm import ChatMessage, FakeLlm, LlmErrorCode, NpcReply
 from app.main import app, get_llm, get_npcs
 from app.npcs import NpcConfig, ScenePosition
@@ -84,8 +90,30 @@ def test_uses_the_chosen_npcs_instructions(client: TestClient, llm: RecordingLlm
     send(client, npc_id="second", message="Who are you?")
 
     [(instructions, messages)] = llm.calls
-    assert instructions == "Instructions for second"
+    assert instructions == build_instructions(make_npc("second", 1))
+    assert "Instructions for first" not in instructions
     assert messages == [ChatMessage(role="user", content="Who are you?")]
+
+
+def test_instructions_describe_the_npc() -> None:
+    """The model needs the NPC's name, personality, and expertise to speak as it."""
+    instructions = build_instructions(make_npc("first", 0))
+
+    assert "Test NPC" in instructions
+    assert "Instructions for first" in instructions
+    assert "Test expertise" in instructions
+
+
+def test_shared_rules_come_after_the_character_notes() -> None:
+    """The rules go last, so a personality can't talk the model out of them."""
+    instructions = build_instructions(make_npc("first", 0))
+
+    assert instructions.endswith(SHARED_RULES)
+
+
+def test_instructions_leave_out_the_knowledge_base() -> None:
+    """The model has no use for the private knowledge base ID."""
+    assert "collection-first" not in build_instructions(make_npc("first", 0))
 
 
 def test_removes_spaces_around_a_message(client: TestClient, llm: RecordingLlm) -> None:
