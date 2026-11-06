@@ -8,6 +8,9 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:8000',
     },
+    // Tests read the NPC files to check placement. The app itself gets NPCs from the API,
+    // so the dev server keeps its default of serving nothing outside the frontend folder.
+    fs: process.env.VITEST ? { allow: ['.', '../data/npcs'] } : undefined,
   },
   test: {
     // jsdom gives tests a simulated browser page.
