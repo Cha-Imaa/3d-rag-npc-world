@@ -1,0 +1,11 @@
+# A neutral stand-in. Its name, personality, and specialty are not decided yet.
+id = "placeholder-two"
+display_name = "Placeholder Two"
+enabled = true
+
+personality_instructions = "Speak plainly and politely. This is a neutral test personality."
+expertise = "Test expertise for placeholder two. The real specialty is not decided yet."
+knowledge_base_id = "test-collection-two"
+
+# A tile on the village's hexagon grid.
+scene_position = { q = 0, r = 1 }
