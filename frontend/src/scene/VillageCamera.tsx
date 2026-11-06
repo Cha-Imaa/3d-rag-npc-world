@@ -8,8 +8,8 @@ export function VillageCamera({ onCameraMove }: { onCameraMove: () => void }) {
   return (
     <OrbitControls
       enablePan={false}
-      minDistance={7}
-      maxDistance={26}
+      minDistance={8}
+      maxDistance={40}
       minPolarAngle={0.35}
       maxPolarAngle={1.3}
       onStart={onCameraMove}

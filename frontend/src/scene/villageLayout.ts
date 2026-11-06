@@ -18,12 +18,16 @@ export type VillagePiece = HexCoordinate & {
   offset?: [x: number, z: number]
   /** Height above the ground, for pieces that float, such as clouds. */
   height?: number
+  /** Sideways speed in scene units per second, for pieces that drift, such as clouds. */
+  drift?: number
 }
 
 /** Every model the village uses. Each name matches a file in public/models/village. */
 export const VILLAGE_MODELS = [
   'hex_grass',
   'hex_road_A',
+  'hex_river_A',
+  'hex_river_crossing_B',
   'building_home_A_red',
   'building_home_B_red',
   'building_tavern_red',
@@ -32,24 +36,39 @@ export const VILLAGE_MODELS = [
   'building_church_red',
   'building_windmill_red',
   'building_well_red',
+  'building_watermill_red',
+  'building_lumbermill_red',
+  'building_mine_red',
+  'building_tower_A_red',
+  'building_stage_A',
+  'building_bridge_A',
   'trees_A_large',
   'trees_A_medium',
+  'trees_A_small',
   'trees_B_large',
   'trees_B_medium',
+  'trees_B_small',
   'rock_single_A',
+  'rock_single_C',
   'hills_A_trees',
+  'hills_B_trees',
+  'mountain_A_grass_trees',
+  'mountain_B_grass_trees',
   'cloud_big',
   'cloud_small',
   'barrel',
   'crate_A_big',
   'sack',
   'wheelbarrow',
+  'resource_lumber',
+  'tent',
+  'flag_red',
 ] as const
 
 export type VillageModel = (typeof VILLAGE_MODELS)[number]
 
 /** How many rings of hexagons surround the center tile. */
-export const ISLAND_RADIUS = 3
+export const ISLAND_RADIUS = 5
 
 /** Tiles measure 2 units from one flat side to the opposite flat side. */
 const HEX_WIDTH = 2
@@ -59,6 +78,8 @@ const HEX_ROW_SPACING = (HEX_WIDTH * Math.sqrt(3)) / 2
 
 /** Road tiles replace the grass on their hexagon. */
 export const ROAD_TILES: VillagePiece[] = [
+  { model: 'hex_road_A', q: -5, r: 0 },
+  { model: 'hex_road_A', q: -4, r: 0 },
   { model: 'hex_road_A', q: -3, r: 0 },
   { model: 'hex_road_A', q: -2, r: 0 },
   { model: 'hex_road_A', q: -1, r: 0 },
@@ -66,6 +87,18 @@ export const ROAD_TILES: VillagePiece[] = [
   { model: 'hex_road_A', q: 1, r: 0 },
   { model: 'hex_road_A', q: 2, r: 0 },
   { model: 'hex_road_A', q: 3, r: 0 },
+  { model: 'hex_road_A', q: 5, r: 0 },
+]
+
+/** River tiles also replace the grass. The river crosses the road at q 4, r 0. */
+export const RIVER_TILES: VillagePiece[] = [
+  { model: 'hex_river_A', q: 4, r: -5, turns: 2 },
+  { model: 'hex_river_A', q: 4, r: -4, turns: 2 },
+  { model: 'hex_river_A', q: 4, r: -3, turns: 2 },
+  { model: 'hex_river_A', q: 4, r: -2, turns: 2 },
+  { model: 'hex_river_A', q: 4, r: -1, turns: 2 },
+  { model: 'hex_river_crossing_B', q: 4, r: 0, turns: 2 },
+  { model: 'hex_river_A', q: 4, r: 1, turns: 2 },
 ]
 
 /** Buildings, nature, and props. Each sits on top of a ground tile. */
@@ -83,7 +116,7 @@ export const VILLAGE_PIECES: VillagePiece[] = [
   { model: 'building_church_red', q: 1, r: 1, turns: 3 },
   { model: 'building_home_A_red', q: 2, r: 1, turns: 3 },
 
-  // Outer ring of the village
+  // Outer ring of the old village center
   { model: 'building_windmill_red', q: 1, r: -2 },
   { model: 'building_home_A_red', q: 0, r: 2, turns: 3 },
   { model: 'trees_A_large', q: -1, r: -2 },
@@ -96,8 +129,6 @@ export const VILLAGE_PIECES: VillagePiece[] = [
   { model: 'trees_A_medium', q: -2, r: 2 },
   { model: 'rock_single_A', q: -1, r: 2 },
   { model: 'trees_B_medium', q: 1, r: 2 },
-
-  // Forest along the far edges
   { model: 'trees_B_large', q: 0, r: -3 },
   { model: 'trees_A_large', q: 1, r: -3 },
   { model: 'hills_A_trees', q: 2, r: -3 },
@@ -107,15 +138,78 @@ export const VILLAGE_PIECES: VillagePiece[] = [
   { model: 'trees_A_medium', q: -1, r: 3 },
   { model: 'trees_A_large', q: 0, r: 3 },
 
+  // Lumber camp and houses to the west
+  { model: 'building_lumbermill_red', q: -4, r: -1 },
+  { model: 'resource_lumber', q: -3, r: -1 },
+  { model: 'trees_A_small', q: -3, r: -2 },
+  { model: 'building_home_B_red', q: -2, r: -2 },
+  { model: 'building_tower_A_red', q: -5, r: 1 },
+  { model: 'building_home_B_red', q: -4, r: 1, turns: 3 },
+
+  // Mountains and a mine to the north
+  { model: 'mountain_A_grass_trees', q: -1, r: -4 },
+  { model: 'mountain_B_grass_trees', q: 0, r: -5 },
+  { model: 'mountain_A_grass_trees', q: 1, r: -5 },
+  { model: 'mountain_B_grass_trees', q: 2, r: -5 },
+  { model: 'hills_B_trees', q: 3, r: -5 },
+  { model: 'hills_B_trees', q: -2, r: -3 },
+  { model: 'trees_B_large', q: -1, r: -3 },
+  { model: 'trees_B_medium', q: 0, r: -4 },
+  { model: 'building_mine_red', q: 1, r: -4 },
+  { model: 'rock_single_C', q: 2, r: -4 },
+  { model: 'trees_A_small', q: 3, r: -4 },
+
+  // Far bank of the river
+  { model: 'trees_A_large', q: 5, r: -5 },
+  { model: 'hills_B_trees', q: 5, r: -4 },
+  { model: 'trees_B_medium', q: 5, r: -3 },
+  { model: 'trees_B_small', q: 5, r: -2 },
+  { model: 'building_tower_A_red', q: 5, r: -1 },
+
+  // Watermill standing in the river, so its wheel reaches the water
+  { model: 'building_watermill_red', q: 4, r: -2 },
+
+  // Bridge carrying the road over the river. 1.5 turns is a quarter circle.
+  { model: 'building_bridge_A', q: 4, r: 0, turns: 1.5 },
+
+  // Fairground to the south
+  { model: 'building_stage_A', q: 1, r: 3, turns: 3 },
+  { model: 'tent', q: 2, r: 2 },
+  { model: 'tent', q: 2, r: 3 },
+  { model: 'tent', q: 1, r: 4 },
+  { model: 'building_home_A_red', q: 3, r: 1, turns: 3 },
+  { model: 'trees_B_medium', q: 3, r: 2 },
+
+  // Forest to the south-west
+  { model: 'trees_A_large', q: -5, r: 2 },
+  { model: 'trees_B_large', q: -5, r: 3 },
+  { model: 'trees_A_medium', q: -5, r: 4 },
+  { model: 'trees_B_medium', q: -5, r: 5 },
+  { model: 'trees_B_small', q: -4, r: 2 },
+  { model: 'trees_A_large', q: -4, r: 3 },
+  { model: 'hills_A_trees', q: -4, r: 4 },
+  { model: 'trees_A_medium', q: -4, r: 5 },
+  { model: 'trees_B_large', q: -3, r: 4 },
+  { model: 'trees_A_large', q: -3, r: 5 },
+  { model: 'trees_A_small', q: -2, r: 4 },
+  { model: 'trees_B_medium', q: -2, r: 5 },
+  { model: 'rock_single_C', q: -1, r: 4 },
+  { model: 'trees_B_large', q: -1, r: 5 },
+  { model: 'trees_A_medium', q: 0, r: 4 },
+  { model: 'trees_B_small', q: 0, r: 5 },
+
   // Small props beside the buildings, sharing their tiles
   { model: 'barrel', q: -1, r: -1, offset: [0.7, 0.5] },
   { model: 'crate_A_big', q: 1, r: -1, offset: [-0.7, 0.6] },
   { model: 'sack', q: -1, r: 1, offset: [0.7, -0.5] },
   { model: 'wheelbarrow', q: 2, r: 1, offset: [-0.7, -0.5] },
+  { model: 'flag_red', q: 1, r: 3, offset: [0.75, 0.3] },
 
   // Clouds drifting above the island
-  { model: 'cloud_big', q: -2, r: -1, height: 4 },
-  { model: 'cloud_small', q: 3, r: -3, height: 3.5 },
+  { model: 'cloud_big', q: -2, r: -1, height: 5, drift: 0.35 },
+  { model: 'cloud_small', q: 3, r: -3, height: 4.5, drift: 0.5 },
+  { model: 'cloud_big', q: 4, r: 1, height: 5.5, drift: 0.3 },
+  { model: 'cloud_small', q: -4, r: 3, height: 4, drift: 0.45 },
 ]
 
 /**
@@ -157,16 +251,16 @@ export function hexesWithinRadius(radius: number): HexCoordinate[] {
 }
 
 /**
- * Build the island's ground: road tiles where roads run, and grass everywhere else.
- * Input: the island radius and the road tiles. Output: one ground tile per hexagon.
+ * Build the island's ground: the given road and river tiles, and grass everywhere else.
+ * Input: the island radius and the non-grass tiles. Output: one ground tile per hexagon.
  */
-export function buildGroundTiles(radius: number, roads: VillagePiece[]): VillagePiece[] {
-  const isRoad = (hex: HexCoordinate) =>
-    roads.some((road) => road.q === hex.q && road.r === hex.r)
+export function buildGroundTiles(radius: number, specialTiles: VillagePiece[]): VillagePiece[] {
+  const isSpecial = (hex: HexCoordinate) =>
+    specialTiles.some((tile) => tile.q === hex.q && tile.r === hex.r)
 
   const grassTiles = hexesWithinRadius(radius)
-    .filter((hex) => !isRoad(hex))
+    .filter((hex) => !isSpecial(hex))
     .map((hex): VillagePiece => ({ ...hex, model: 'hex_grass' }))
 
-  return [...grassTiles, ...roads]
+  return [...grassTiles, ...specialTiles]
 }

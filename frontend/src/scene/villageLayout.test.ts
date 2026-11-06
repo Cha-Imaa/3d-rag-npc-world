@@ -5,6 +5,7 @@ import {
   hexToWorld,
   ISLAND_RADIUS,
   NPC_SPOTS,
+  RIVER_TILES,
   ROAD_TILES,
   VILLAGE_PIECES,
   type HexCoordinate,
@@ -46,7 +47,7 @@ describe('hexesWithinRadius', () => {
 
 describe('buildGroundTiles', () => {
   it('gives every hexagon exactly one ground tile', () => {
-    const tiles = buildGroundTiles(ISLAND_RADIUS, ROAD_TILES)
+    const tiles = buildGroundTiles(ISLAND_RADIUS, [...ROAD_TILES, ...RIVER_TILES])
     const expectedCount = hexesWithinRadius(ISLAND_RADIUS).length
 
     expect(tiles).toHaveLength(expectedCount)
@@ -57,9 +58,21 @@ describe('buildGroundTiles', () => {
 describe('village layout', () => {
   const islandHexes = new Set(hexesWithinRadius(ISLAND_RADIUS).map(hexKey))
 
-  it('keeps every road, piece, and NPC spot on the island', () => {
-    for (const hex of [...ROAD_TILES, ...VILLAGE_PIECES, ...NPC_SPOTS]) {
+  it('keeps every road, river, piece, and NPC spot on the island', () => {
+    for (const hex of [...ROAD_TILES, ...RIVER_TILES, ...VILLAGE_PIECES, ...NPC_SPOTS]) {
       expect(islandHexes.has(hexKey(hex))).toBe(true)
+    }
+  })
+
+  it('keeps pieces off the road and river, except the watermill and bridge', () => {
+    const roadAndRiver = new Set([...ROAD_TILES, ...RIVER_TILES].map(hexKey))
+    const allowedOnWater = ['building_watermill_red', 'building_bridge_A']
+    const groundPieces = VILLAGE_PIECES.filter(
+      (piece) => !piece.height && !allowedOnWater.includes(piece.model),
+    )
+
+    for (const piece of groundPieces) {
+      expect(roadAndRiver.has(hexKey(piece))).toBe(false)
     }
   })
 
