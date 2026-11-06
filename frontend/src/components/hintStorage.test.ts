@@ -20,6 +20,12 @@ describe('first-visit hint storage', () => {
     expect(shouldShowFirstVisitHint()).toBe(false)
   })
 
+  it('still shows the walking hint to browsers that dismissed the old hint', () => {
+    localStorage.setItem('loreland.hintSeen', 'true')
+
+    expect(shouldShowFirstVisitHint()).toBe(true)
+  })
+
   it('still works when storage is blocked', () => {
     const blocked = () => {
       throw new Error('blocked')

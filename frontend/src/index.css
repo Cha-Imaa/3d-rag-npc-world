@@ -65,7 +65,28 @@ body,
   cursor: pointer;
 }
 
-/* Which character is selected, in the top right so it never covers the first-visit tip */
+/* Shown above the first-visit tip when an NPC is close enough to talk to */
+.talk-prompt {
+  position: absolute;
+  bottom: 84px;
+  left: 50%;
+  margin: 0;
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 90%);
+  transform: translateX(-50%);
+}
+
+.talk-prompt kbd {
+  padding: 1px 6px;
+  border-radius: 4px;
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  background: #7a5230;
+}
+
+/* Which character is being talked to, in the top right so it never covers the first-visit tip */
 .selected-character {
   position: absolute;
   top: 16px;

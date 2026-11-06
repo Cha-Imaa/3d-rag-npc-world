@@ -11,7 +11,7 @@ describe('FirstVisitHint', () => {
     const onDismiss = vi.fn()
     render(<FirstVisitHint onDismiss={onDismiss} />)
 
-    expect(screen.getByText('Drag to look around. Click a character to talk.')).toBeTruthy()
+    expect(screen.getByText('Use WASD or the arrow keys to walk. Drag to look around.')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: 'Got it' }))
     expect(onDismiss).toHaveBeenCalledOnce()

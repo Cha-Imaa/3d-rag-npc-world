@@ -1,4 +1,5 @@
-const HINT_SEEN_KEY = 'loreland.hintSeen'
+/** Renamed when walking arrived, so browsers that dismissed the old hint see the new one. */
+const HINT_SEEN_KEY = 'loreland.walkingHintSeen'
 
 /**
  * Decide whether to show the first-visit hint.

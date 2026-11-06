@@ -5,7 +5,7 @@
 export function FirstVisitHint({ onDismiss }: { onDismiss: () => void }) {
   return (
     <div className="first-visit-hint" role="status">
-      <p>Drag to look around. Click a character to talk.</p>
+      <p>Use WASD or the arrow keys to walk. Drag to look around.</p>
       <button type="button" onClick={onDismiss}>
         Got it
       </button>

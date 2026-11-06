@@ -1,5 +1,5 @@
 /**
- * Confirms which placeholder character is selected, until the real chat panel exists.
+ * Confirms which placeholder character the visitor is talking to, until the real chat panel exists.
  * Input: characterNumber is the number to show, and onClose runs when the visitor closes it.
  */
 export function SelectedCharacterCard({
