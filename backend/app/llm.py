@@ -1,6 +1,7 @@
 """LLM access: the only module that talks to OpenAI."""
 
-from typing import Literal
+import time
+from typing import Literal, get_args
 
 import httpx2
 from openai import AuthenticationError, OpenAI, OpenAIError, RateLimitError
@@ -25,6 +26,9 @@ LlmErrorCode = Literal[
     "llm_unavailable",  # OpenAI could not be reached, was busy, or returned an error.
     "llm_bad_reply",  # The model answered, but not with a usable reply.
 ]
+
+# Long enough to see the chat panel's thinking state when using the fake LLM.
+FAKE_REPLY_DELAY_SECONDS = 1
 
 
 class LlmError(Exception):
@@ -122,3 +126,67 @@ class OpenAiLlm:
             raise LlmError("llm_bad_reply")
 
         return reply
+
+
+class FakeLlm:
+    """Stands in for OpenAI, so chat can be built and tested with no key and no cost.
+
+    Every reply is labelled as fake, so it can't be mistaken for a real NPC answer.
+
+    To try an error, send one of the LlmErrorCode values as the whole message. Sending
+    the same code again straight after succeeds, which is what a retry does.
+    """
+
+    def __init__(self, reply_delay_seconds: float = 0) -> None:
+        """Prepare the fake.
+
+        Args:
+            reply_delay_seconds: How long each reply takes. Tests leave this at zero.
+        """
+        self.reply_delay_seconds = reply_delay_seconds
+        self.last_failed_code = None
+
+    def generate_reply(self, instructions: str, messages: list[ChatMessage]) -> NpcReply:
+        """Answer like OpenAiLlm.generate_reply, without any network call.
+
+        Args:
+            instructions: Accepted to match the real method, and not used.
+            messages: The conversation so far, ending with the visitor's new message.
+
+        Returns:
+            A casual reply that repeats the visitor's message.
+
+        Raises:
+            LlmError: If the message is an error code that did not just fail.
+        """
+        time.sleep(self.reply_delay_seconds)
+        visitor_message = messages[-1].content.strip()
+
+        if visitor_message in get_args(LlmErrorCode) and visitor_message != self.last_failed_code:
+            self.last_failed_code = visitor_message
+            raise LlmError(visitor_message)
+
+        self.last_failed_code = None
+
+        return NpcReply(
+            kind="casual",
+            answer=f"[Fake reply] You said: {visitor_message}",
+            citation_ids=[],
+            referral_npc_id=None,
+            referral_reason=None,
+        )
+
+
+def create_llm(settings: Settings) -> OpenAiLlm | FakeLlm:
+    """Choose what answers chat messages.
+
+    Args:
+        settings: use_fake_llm picks the fake. The real LLM is the default.
+
+    Returns:
+        An object with a generate_reply method.
+    """
+    if settings.use_fake_llm:
+        return FakeLlm(reply_delay_seconds=FAKE_REPLY_DELAY_SECONDS)
+
+    return OpenAiLlm(settings)

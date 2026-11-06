@@ -25,3 +25,6 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr | None = None
     openai_chat_model: str = "gpt-6-luna"
     openai_reasoning_effort: str = "none"
+
+    # Answers chat with FakeLlm instead of OpenAI, so building the chat panel costs no credit.
+    use_fake_llm: bool = False

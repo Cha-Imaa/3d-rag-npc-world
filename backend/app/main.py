@@ -6,13 +6,16 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
 
+from app.llm import create_llm
 from app.npcs import NpcConfig, PublicNpc, list_public_npcs, load_npcs
+from app.settings import Settings
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Load NPC files once at startup, so a broken file stops the server with a clear error."""
     app.state.npcs = load_npcs()
+    app.state.llm = create_llm(Settings())
     yield
 
 
