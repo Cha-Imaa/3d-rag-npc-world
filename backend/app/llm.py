@@ -19,7 +19,7 @@ MAX_RETRIES = 1
 # Limits what one reply can cost. Replies are short, so this is rarely reached.
 MAX_OUTPUT_TOKENS = 1000
 
-# The reasons a reply can fail. The interface picks its plain-language message from these.
+# The reasons a reply can fail. Each one has a plain-language message in chat.py.
 LlmErrorCode = Literal[
     "llm_not_configured",  # The API key is missing, or OpenAI rejected it.
     "llm_out_of_credit",  # The API credit has run out.
