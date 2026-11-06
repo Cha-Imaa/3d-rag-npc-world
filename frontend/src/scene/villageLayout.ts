@@ -101,6 +101,9 @@ export const RIVER_TILES: VillagePiece[] = [
   { model: 'hex_river_A', q: 4, r: 1, turns: 2 },
 ]
 
+/** The river tile the bridge stands on. Its deck runs east to west, along the road. */
+export const BRIDGE_TILE: HexCoordinate = { q: 4, r: 0 }
+
 /** Buildings, nature, and props. Each sits on top of a ground tile. */
 export const VILLAGE_PIECES: VillagePiece[] = [
   // Buildings along the north side of the road
@@ -169,8 +172,8 @@ export const VILLAGE_PIECES: VillagePiece[] = [
   // Watermill standing in the river, so its wheel reaches the water
   { model: 'building_watermill_red', q: 4, r: -2 },
 
-  // Bridge carrying the road over the river. 1.5 turns is a quarter circle.
-  { model: 'building_bridge_A', q: 4, r: 0, turns: 1.5 },
+  // Bridge carrying the road over the river. One turn lines its deck up with the road.
+  { model: 'building_bridge_A', q: 4, r: 0, turns: 1 },
 
   // Fairground to the south
   { model: 'building_stage_A', q: 1, r: 3, turns: 3 },
@@ -213,21 +216,43 @@ export const VILLAGE_PIECES: VillagePiece[] = [
 ]
 
 /**
- * Where the neutral NPC placeholders stand. Which NPC uses which spot is not decided,
- * so this list only holds positions and never refers to a specific NPC.
- */
-export const NPC_SPOTS: HexCoordinate[] = [
-  { q: -2, r: 0 },
-  { q: 0, r: 1 },
-  { q: 2, r: 0 },
-]
-
-/**
  * Convert a grid position to a position in the 3D scene.
  * Input: a hexagon's q and r. Output: its center as [x, z]. The center tile is at [0, 0].
  */
 export function hexToWorld({ q, r }: HexCoordinate): [x: number, z: number] {
   return [HEX_WIDTH * (q + r / 2), HEX_ROW_SPACING * r]
+}
+
+/**
+ * Find which hexagon a position in the 3D scene falls on. This is the reverse of hexToWorld.
+ * Input: a position as x and z. Output: the nearest hexagon's q and r.
+ */
+export function worldToHex(x: number, z: number): HexCoordinate {
+  const exactRow = z / HEX_ROW_SPACING
+  const exactColumn = x / HEX_WIDTH - exactRow / 2
+  const exactThird = -exactColumn - exactRow
+
+  let q = Math.round(exactColumn)
+  let r = Math.round(exactRow)
+  const third = Math.round(exactThird)
+
+  // q + r + third must equal 0, so the value rounded the furthest is rebuilt from the other two.
+  const qError = Math.abs(q - exactColumn)
+  const rError = Math.abs(r - exactRow)
+  const thirdError = Math.abs(third - exactThird)
+
+  if (qError > rError && qError > thirdError) {
+    q = -r - third
+  } else if (rError > thirdError) {
+    r = -q - third
+  }
+
+  return { q, r }
+}
+
+/** Check whether a hexagon is part of the island, given the island's radius. */
+export function isOnIsland({ q, r }: HexCoordinate, radius: number): boolean {
+  return Math.max(Math.abs(q), Math.abs(r), Math.abs(q + r)) <= radius
 }
 
 /**

@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import { CONFIGURED_NPC_SPOTS } from './configuredNpcSpots'
 import {
   buildGroundTiles,
   hexesWithinRadius,
   hexToWorld,
   ISLAND_RADIUS,
-  NPC_SPOTS,
   RIVER_TILES,
   ROAD_TILES,
   VILLAGE_PIECES,
@@ -59,7 +59,7 @@ describe('village layout', () => {
   const islandHexes = new Set(hexesWithinRadius(ISLAND_RADIUS).map(hexKey))
 
   it('keeps every road, river, piece, and NPC spot on the island', () => {
-    for (const hex of [...ROAD_TILES, ...RIVER_TILES, ...VILLAGE_PIECES, ...NPC_SPOTS]) {
+    for (const hex of [...ROAD_TILES, ...RIVER_TILES, ...VILLAGE_PIECES, ...CONFIGURED_NPC_SPOTS]) {
       expect(islandHexes.has(hexKey(hex))).toBe(true)
     }
   })
@@ -86,7 +86,7 @@ describe('village layout', () => {
   it('keeps NPC spots clear of buildings and scenery', () => {
     const occupied = new Set(VILLAGE_PIECES.filter((piece) => !piece.height).map(hexKey))
 
-    for (const spot of NPC_SPOTS) {
+    for (const spot of CONFIGURED_NPC_SPOTS) {
       expect(occupied.has(hexKey(spot))).toBe(false)
     }
   })
