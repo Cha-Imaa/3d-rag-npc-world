@@ -5,6 +5,7 @@ import { rememberHintSeen, shouldShowFirstVisitHint } from './components/hintSto
 import { SceneErrorBoundary } from './components/SceneErrorBoundary'
 import { SceneFallback } from './components/SceneFallback'
 import { SceneLoadingOverlay } from './components/SceneLoadingOverlay'
+import { SelectedCharacterCard } from './components/SelectedCharacterCard'
 import { VillageCanvas } from './scene/VillageCanvas'
 import { isWebGLAvailable } from './scene/webgl'
 
@@ -12,6 +13,7 @@ import { isWebGLAvailable } from './scene/webgl'
 function App() {
   const [canShowScene] = useState(isWebGLAvailable)
   const [isHintVisible, setIsHintVisible] = useState(shouldShowFirstVisitHint)
+  const [selectedCharacter, setSelectedCharacter] = useState<number | null>(null)
 
   /** Hide the hint for good, once the visitor has shown they found the controls. */
   function dismissHint() {
@@ -23,9 +25,20 @@ function App() {
     <main className="app">
       {canShowScene ? (
         <SceneErrorBoundary>
-          <VillageCanvas onCameraMove={dismissHint} />
+          <VillageCanvas
+            selectedCharacter={selectedCharacter}
+            onSelectCharacter={setSelectedCharacter}
+            onClearSelection={() => setSelectedCharacter(null)}
+            onCameraMove={dismissHint}
+          />
           <SceneLoadingOverlay />
           {isHintVisible && <FirstVisitHint onDismiss={dismissHint} />}
+          {selectedCharacter !== null && (
+            <SelectedCharacterCard
+              characterNumber={selectedCharacter + 1}
+              onClose={() => setSelectedCharacter(null)}
+            />
+          )}
         </SceneErrorBoundary>
       ) : (
         <SceneFallback

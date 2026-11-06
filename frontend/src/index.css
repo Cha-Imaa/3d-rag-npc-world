@@ -65,6 +65,38 @@ body,
   cursor: pointer;
 }
 
+/* Which character is selected, in the top right so it never covers the first-visit tip */
+.selected-character {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 10px 16px;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 90%);
+}
+
+.selected-character h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.selected-character p {
+  margin: 0;
+}
+
+.selected-character button {
+  padding: 4px 12px;
+  border: 0;
+  border-radius: 6px;
+  font: inherit;
+  color: #fff;
+  background: #7a5230;
+  cursor: pointer;
+}
+
 /* Download progress, centered over the scene */
 .scene-loading {
   position: absolute;
