@@ -1,5 +1,6 @@
 """Tests for the chat endpoint: what it accepts, what it sends on, and how it fails."""
 
+import logging
 from collections.abc import Iterator
 from typing import get_args
 
@@ -25,6 +26,8 @@ class RecordingLlm:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, list[ChatMessage]]] = []
+        # A test can set this to None to act like OpenAI leaving the counts out.
+        self.usage: TokenUsage | None = TokenUsage(input_tokens=100, output_tokens=20)
 
     def generate_reply(self, instructions: str, messages: list[ChatMessage]) -> GeneratedReply:
         """Record the call, and answer with values the server has not checked."""
@@ -38,7 +41,7 @@ class RecordingLlm:
             referral_reason="A made-up reason",
         )
 
-        return GeneratedReply(reply=reply, usage=TokenUsage(input_tokens=100, output_tokens=20))
+        return GeneratedReply(reply=reply, usage=self.usage)
 
 
 def make_npc(npc_id: str, tile_q: int, enabled: bool = True) -> NpcConfig:
@@ -95,6 +98,36 @@ def test_uses_the_chosen_npcs_instructions(client: TestClient, llm: RecordingLlm
     assert instructions == build_instructions(make_npc("second", 1))
     assert "Instructions for first" not in instructions
     assert messages == [ChatMessage(role="user", content="Who are you?")]
+
+
+def test_logs_the_token_counts_of_a_reply(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.INFO, logger="app"):
+        send(client, npc_id="second")
+
+    assert "Chat reply: npc_id=second input_tokens=100 output_tokens=20" in caplog.messages
+
+
+def test_logs_unknown_token_counts_as_unknown(
+    client: TestClient, llm: RecordingLlm, caplog: pytest.LogCaptureFixture
+) -> None:
+    llm.usage = None
+
+    with caplog.at_level(logging.INFO, logger="app"):
+        send(client)
+
+    assert "Chat reply: npc_id=first tokens unknown" in caplog.messages
+
+
+def test_the_log_leaves_out_the_message_and_the_visitor(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.INFO, logger="app"):
+        send(client, message="A private question")
+
+    assert "A private question" not in caplog.text
+    assert VISITOR_HEADERS["X-Visitor-Id"] not in caplog.text
 
 
 def test_instructions_describe_the_npc() -> None:

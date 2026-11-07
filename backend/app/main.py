@@ -1,5 +1,6 @@
 """Loreland API entry point: creates the FastAPI app and registers its routes."""
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -10,9 +11,20 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.chat import LLM_ERROR_MESSAGES, ChatRequest, ChatResponse, build_instructions
-from app.llm import ChatMessage, FakeLlm, LlmError, OpenAiLlm, create_llm
+from app.llm import ChatMessage, FakeLlm, LlmError, OpenAiLlm, TokenUsage, create_llm
 from app.npcs import NpcConfig, PublicNpc, find_enabled_npc, list_public_npcs, load_npcs
 from app.settings import Settings
+
+logger = logging.getLogger(__name__)
+
+# Uvicorn only sets up its own loggers, so without this the app's info lines are hidden.
+# The format matches Uvicorn's, so both read the same in the terminal.
+app_logger = logging.getLogger("app")
+app_logger.setLevel(logging.INFO)
+if not app_logger.handlers:
+    log_handler = logging.StreamHandler()
+    log_handler.setFormatter(logging.Formatter("%(levelname)s:     %(message)s"))
+    app_logger.addHandler(log_handler)
 
 
 class NpcNotFoundError(Exception):
@@ -38,6 +50,28 @@ def get_npcs(request: Request) -> list[NpcConfig]:
 def get_llm(request: Request) -> OpenAiLlm | FakeLlm:
     """Give a route the LLM chosen at startup. Tests replace this with their own."""
     return request.app.state.llm
+
+
+def log_token_usage(npc_id: str, usage: TokenUsage | None) -> None:
+    """Record what one reply cost, to keep track of the API credit.
+
+    Only the NPC and the counts are logged. Message text and the visitor ID are left
+    out, so the log never holds what visitors wrote or who wrote it.
+
+    Args:
+        npc_id: The NPC that replied.
+        usage: The reply's token counts, or None if OpenAI did not report them.
+    """
+    if usage is None:
+        logger.info("Chat reply: npc_id=%s tokens unknown", npc_id)
+        return
+
+    logger.info(
+        "Chat reply: npc_id=%s input_tokens=%d output_tokens=%d",
+        npc_id,
+        usage.input_tokens,
+        usage.output_tokens,
+    )
 
 
 def error_response(status_code: int, code: str, message: str) -> JSONResponse:
@@ -130,5 +164,6 @@ def send_chat_message(
     # Only the new message for now. Earlier messages are added once they are saved.
     messages = [ChatMessage(role="user", content=chat_request.message)]
     generated = llm.generate_reply(build_instructions(npc), messages)
+    log_token_usage(npc.id, generated.usage)
 
     return ChatResponse(answer=generated.reply.answer)
