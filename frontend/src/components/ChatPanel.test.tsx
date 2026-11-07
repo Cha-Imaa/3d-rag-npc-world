@@ -195,5 +195,96 @@ describe('ChatPanel', () => {
 
     expect(await screen.findByText('A reply.')).toBeTruthy()
     expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+  })
+
+  it('has no retry button before anything fails', async () => {
+    const { messageBox, sendButton } = renderPanel()
+
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+
+    typeMessage(messageBox, 'Hello')
+    fireEvent.click(sendButton)
+    await screen.findByText('A reply.')
+
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+  })
+
+  it('retries when credit has run out, without repeating the message', async () => {
+    sendChatMessageMock.mockRejectedValueOnce(new ChatError('llm_out_of_credit', 'Out of credit.'))
+    const { messageBox, sendButton } = renderPanel()
+
+    typeMessage(messageBox, 'Hello')
+    fireEvent.click(sendButton)
+    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }))
+
+    expect(await screen.findByText('A reply.')).toBeTruthy()
+    expect(sendChatMessageMock).toHaveBeenCalledTimes(2)
+    expect(sendChatMessageMock).toHaveBeenLastCalledWith('test-npc', 'Hello')
+    expect(screen.getAllByText('Hello')).toHaveLength(1)
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+  })
+
+  it('offers the retry again when a retry fails too', async () => {
+    sendChatMessageMock.mockRejectedValueOnce(new ChatError('llm_unavailable', 'First failure.'))
+    sendChatMessageMock.mockRejectedValueOnce(new ChatError('llm_unavailable', 'Second failure.'))
+    const { messageBox, sendButton } = renderPanel()
+
+    typeMessage(messageBox, 'Hello')
+    fireEvent.click(sendButton)
+    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }))
+
+    expect(await screen.findByText('Second failure.')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+
+    expect(await screen.findByText('A reply.')).toBeTruthy()
+    expect(sendChatMessageMock).toHaveBeenCalledTimes(3)
+    expect(screen.getAllByText('Hello')).toHaveLength(1)
+  })
+
+  it('shows the thinking note in place of the failure while retrying', async () => {
+    sendChatMessageMock.mockRejectedValueOnce(new ChatError('llm_unavailable', 'Failed.'))
+    const { messageBox, sendButton } = renderPanel()
+
+    typeMessage(messageBox, 'Hello')
+    fireEvent.click(sendButton)
+    const retryButton = await screen.findByRole<HTMLButtonElement>('button', { name: 'Try again' })
+
+    let deliverReply: (reply: ChatReply) => void = () => {}
+    sendChatMessageMock.mockReturnValue(
+      new Promise((resolve) => {
+        deliverReply = resolve
+      }),
+    )
+    retryButton.focus()
+    fireEvent.click(retryButton)
+
+    expect(screen.getByText('Test NPC is thinking…')).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+    // The button is gone, so the cursor has to go somewhere useful.
+    expect(document.activeElement).toBe(messageBox)
+
+    deliverReply({ answer: 'A late reply.' })
+
+    expect(await screen.findByText('A late reply.')).toBeTruthy()
+  })
+
+  it('retries the failed message and keeps a new draft in the box', async () => {
+    sendChatMessageMock.mockRejectedValueOnce(new ChatError('llm_unavailable', 'Failed.'))
+    const { messageBox, sendButton } = renderPanel()
+
+    typeMessage(messageBox, 'First')
+    fireEvent.click(sendButton)
+    const retryButton = await screen.findByRole('button', { name: 'Try again' })
+
+    typeMessage(messageBox, 'Half-written next message')
+    fireEvent.click(retryButton)
+
+    expect(await screen.findByText('A reply.')).toBeTruthy()
+    expect(sendChatMessageMock).toHaveBeenLastCalledWith('test-npc', 'First')
+    expect(messageBox.value).toBe('Half-written next message')
   })
 })
