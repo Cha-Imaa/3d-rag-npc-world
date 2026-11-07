@@ -5,6 +5,7 @@ from typing import Literal, get_args
 
 import httpx2
 from openai import AuthenticationError, OpenAI, OpenAIError, RateLimitError
+from openai.types.responses import ParsedResponse
 from pydantic import BaseModel, ValidationError
 
 from app.settings import Settings
@@ -56,6 +57,43 @@ class NpcReply(BaseModel):
     referral_reason: str | None
 
 
+class TokenUsage(BaseModel):
+    """How many tokens one reply used. Each token is paid for, so this tracks spending."""
+
+    input_tokens: int  # The instructions and messages sent to the model.
+    output_tokens: int  # The reply, including any hidden reasoning.
+
+
+class GeneratedReply(BaseModel):
+    """A reply together with what it cost.
+
+    The cost is kept apart from NpcReply, because NpcReply is the shape the model must
+    fill in, and the model doesn't report its own token counts.
+    """
+
+    reply: NpcReply
+    # None when OpenAI did not report usage, so an unknown cost is never logged as zero.
+    usage: TokenUsage | None
+
+
+def read_token_usage(response: ParsedResponse[NpcReply]) -> TokenUsage | None:
+    """Take the token counts from an OpenAI response.
+
+    Args:
+        response: The parsed response returned by the SDK.
+
+    Returns:
+        The input and output token counts, or None if OpenAI left them out.
+    """
+    if response.usage is None:
+        return None
+
+    return TokenUsage(
+        input_tokens=response.usage.input_tokens,
+        output_tokens=response.usage.output_tokens,
+    )
+
+
 class OpenAiLlm:
     """Gets NPC replies from OpenAI."""
 
@@ -78,7 +116,7 @@ class OpenAiLlm:
                 http_client=http_client,
             )
 
-    def generate_reply(self, instructions: str, messages: list[ChatMessage]) -> NpcReply:
+    def generate_reply(self, instructions: str, messages: list[ChatMessage]) -> GeneratedReply:
         """Ask the model for one structured reply.
 
         Args:
@@ -86,7 +124,7 @@ class OpenAiLlm:
             messages: The conversation so far, ending with the visitor's new message.
 
         Returns:
-            The model's reply, in the required structure.
+            The model's reply, in the required structure, and the tokens it used.
 
         Raises:
             LlmError: If no usable reply was produced. Its code says why.
@@ -125,7 +163,7 @@ class OpenAiLlm:
         if reply is None or not reply.answer.strip():
             raise LlmError("llm_bad_reply")
 
-        return reply
+        return GeneratedReply(reply=reply, usage=read_token_usage(response))
 
 
 class FakeLlm:
@@ -146,7 +184,7 @@ class FakeLlm:
         self.reply_delay_seconds = reply_delay_seconds
         self.last_failed_code = None
 
-    def generate_reply(self, instructions: str, messages: list[ChatMessage]) -> NpcReply:
+    def generate_reply(self, instructions: str, messages: list[ChatMessage]) -> GeneratedReply:
         """Answer like OpenAiLlm.generate_reply, without any network call.
 
         Args:
@@ -154,7 +192,7 @@ class FakeLlm:
             messages: The conversation so far, ending with the visitor's new message.
 
         Returns:
-            A casual reply that repeats the visitor's message.
+            A casual reply that repeats the visitor's message, using zero tokens.
 
         Raises:
             LlmError: If the message is an error code that did not just fail.
@@ -168,13 +206,16 @@ class FakeLlm:
 
         self.last_failed_code = None
 
-        return NpcReply(
+        reply = NpcReply(
             kind="casual",
             answer=f"[Fake reply] You said: {visitor_message}",
             citation_ids=[],
             referral_npc_id=None,
             referral_reason=None,
         )
+
+        # Zero is the true count here: the fake spends nothing.
+        return GeneratedReply(reply=reply, usage=TokenUsage(input_tokens=0, output_tokens=0))
 
 
 def create_llm(settings: Settings) -> OpenAiLlm | FakeLlm:

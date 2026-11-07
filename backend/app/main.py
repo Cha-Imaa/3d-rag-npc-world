@@ -129,6 +129,6 @@ def send_chat_message(
 
     # Only the new message for now. Earlier messages are added once they are saved.
     messages = [ChatMessage(role="user", content=chat_request.message)]
-    reply = llm.generate_reply(build_instructions(npc), messages)
+    generated = llm.generate_reply(build_instructions(npc), messages)
 
-    return ChatResponse(answer=reply.answer)
+    return ChatResponse(answer=generated.reply.answer)

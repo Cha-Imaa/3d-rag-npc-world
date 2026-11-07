@@ -13,7 +13,7 @@ from app.chat import (
     SHARED_RULES,
     build_instructions,
 )
-from app.llm import ChatMessage, FakeLlm, LlmErrorCode, NpcReply
+from app.llm import ChatMessage, FakeLlm, GeneratedReply, LlmErrorCode, NpcReply, TokenUsage
 from app.main import app, get_llm, get_npcs
 from app.npcs import NpcConfig, ScenePosition
 
@@ -26,17 +26,19 @@ class RecordingLlm:
     def __init__(self) -> None:
         self.calls: list[tuple[str, list[ChatMessage]]] = []
 
-    def generate_reply(self, instructions: str, messages: list[ChatMessage]) -> NpcReply:
+    def generate_reply(self, instructions: str, messages: list[ChatMessage]) -> GeneratedReply:
         """Record the call, and answer with values the server has not checked."""
         self.calls.append((instructions, messages))
 
-        return NpcReply(
+        reply = NpcReply(
             kind="grounded",
             answer="A test answer",
             citation_ids=["made-up-citation"],
             referral_npc_id="made-up-npc",
             referral_reason="A made-up reason",
         )
+
+        return GeneratedReply(reply=reply, usage=TokenUsage(input_tokens=100, output_tokens=20))
 
 
 def make_npc(npc_id: str, tile_q: int, enabled: bool = True) -> NpcConfig:

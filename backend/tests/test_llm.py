@@ -10,7 +10,7 @@ from collections.abc import Callable
 import httpx2
 import pytest
 
-from app.llm import ChatMessage, LlmError, NpcReply, OpenAiLlm
+from app.llm import ChatMessage, LlmError, NpcReply, OpenAiLlm, TokenUsage
 from app.settings import Settings
 
 MESSAGES = [
@@ -27,39 +27,54 @@ VALID_REPLY = {
     "referral_reason": None,
 }
 
+# Token counts in the shape OpenAI reports them. 45 output tokens include 30 for reasoning.
+TEST_USAGE = {
+    "input_tokens": 120,
+    "input_tokens_details": {"cache_write_tokens": 0, "cached_tokens": 0},
+    "output_tokens": 45,
+    "output_tokens_details": {"reasoning_tokens": 30},
+    "total_tokens": 165,
+}
+
 # The SDK waits before a retry. This header skips that, so error tests stay fast.
 NO_RETRY = {"x-should-retry": "false"}
 
 
-def response_with_content(content: dict) -> httpx2.Response:
-    """Build a successful OpenAI response holding one piece of message content."""
-    return httpx2.Response(
-        200,
-        json={
-            "id": "resp_test",
-            "object": "response",
-            "created_at": 0,
-            "model": "test-model",
-            "status": "completed",
-            "output": [
-                {
-                    "type": "message",
-                    "id": "msg_test",
-                    "role": "assistant",
-                    "status": "completed",
-                    "content": [content],
-                }
-            ],
-            "parallel_tool_calls": True,
-            "tool_choice": "auto",
-            "tools": [],
-        },
-    )
+def response_with_content(content: dict, usage: dict | None = None) -> httpx2.Response:
+    """Build a successful OpenAI response holding one piece of message content.
+
+    The usage block is left out unless given, because OpenAI may leave it out too.
+    """
+    body = {
+        "id": "resp_test",
+        "object": "response",
+        "created_at": 0,
+        "model": "test-model",
+        "status": "completed",
+        "output": [
+            {
+                "type": "message",
+                "id": "msg_test",
+                "role": "assistant",
+                "status": "completed",
+                "content": [content],
+            }
+        ],
+        "parallel_tool_calls": True,
+        "tool_choice": "auto",
+        "tools": [],
+    }
+    if usage is not None:
+        body["usage"] = usage
+
+    return httpx2.Response(200, json=body)
 
 
-def response_with_text(text: str) -> httpx2.Response:
+def response_with_text(text: str, usage: dict | None = None) -> httpx2.Response:
     """Build a successful OpenAI response whose message is the given text."""
-    return response_with_content({"type": "output_text", "text": text, "annotations": []})
+    content = {"type": "output_text", "text": text, "annotations": []}
+
+    return response_with_content(content, usage)
 
 
 def error_response(status: int, code: str | None) -> httpx2.Response:
@@ -92,9 +107,25 @@ def code_of_failed_reply(handler: Callable[[httpx2.Request], httpx2.Response]) -
 def test_a_valid_reply_is_returned() -> None:
     llm = make_llm(lambda request: response_with_text(json.dumps(VALID_REPLY)))
 
-    reply = llm.generate_reply("Test instructions", MESSAGES)
+    generated = llm.generate_reply("Test instructions", MESSAGES)
 
-    assert reply == NpcReply(**VALID_REPLY)
+    assert generated.reply == NpcReply(**VALID_REPLY)
+
+
+def test_the_token_counts_are_returned_with_the_reply() -> None:
+    llm = make_llm(lambda request: response_with_text(json.dumps(VALID_REPLY), usage=TEST_USAGE))
+
+    generated = llm.generate_reply("Test instructions", MESSAGES)
+
+    assert generated.usage == TokenUsage(input_tokens=120, output_tokens=45)
+
+
+def test_missing_token_counts_stay_unknown_instead_of_zero() -> None:
+    llm = make_llm(lambda request: response_with_text(json.dumps(VALID_REPLY)))
+
+    generated = llm.generate_reply("Test instructions", MESSAGES)
+
+    assert generated.usage is None
 
 
 def test_the_request_carries_the_settings_instructions_and_messages() -> None:

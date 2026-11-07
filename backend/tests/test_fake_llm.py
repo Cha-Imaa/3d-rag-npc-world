@@ -3,7 +3,15 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app.llm import FAKE_REPLY_DELAY_SECONDS, ChatMessage, FakeLlm, LlmError, OpenAiLlm, create_llm
+from app.llm import (
+    FAKE_REPLY_DELAY_SECONDS,
+    ChatMessage,
+    FakeLlm,
+    LlmError,
+    OpenAiLlm,
+    TokenUsage,
+    create_llm,
+)
 from app.main import app
 from app.settings import Settings
 
@@ -26,18 +34,25 @@ def code_of_failed_reply(llm: FakeLlm, text: str) -> str:
 
 
 def test_a_reply_is_labelled_as_fake_and_repeats_the_message() -> None:
-    reply = FakeLlm().generate_reply("Test instructions", visitor_says("What do you do here?"))
+    generated = FakeLlm().generate_reply("Test instructions", visitor_says("What do you do here?"))
+    reply = generated.reply
 
     assert reply.answer == "[Fake reply] You said: What do you do here?"
 
 
 def test_a_reply_claims_no_sources_or_referrals() -> None:
-    reply = FakeLlm().generate_reply("Test instructions", visitor_says("Hello again"))
+    reply = FakeLlm().generate_reply("Test instructions", visitor_says("Hello again")).reply
 
     assert reply.kind == "casual"
     assert reply.citation_ids == []
     assert reply.referral_npc_id is None
     assert reply.referral_reason is None
+
+
+def test_a_reply_uses_no_tokens() -> None:
+    generated = FakeLlm().generate_reply("Test instructions", visitor_says("Hello"))
+
+    assert generated.usage == TokenUsage(input_tokens=0, output_tokens=0)
 
 
 @pytest.mark.parametrize(
@@ -49,7 +64,8 @@ def test_each_error_code_can_be_requested(code: str) -> None:
 
 
 def test_a_message_that_only_mentions_a_code_gets_a_normal_reply() -> None:
-    reply = FakeLlm().generate_reply("Test instructions", visitor_says("Is llm_bad_reply bad?"))
+    generated = FakeLlm().generate_reply("Test instructions", visitor_says("Is llm_bad_reply bad?"))
+    reply = generated.reply
 
     assert reply.kind == "casual"
 
@@ -58,7 +74,7 @@ def test_a_retry_of_the_same_code_succeeds() -> None:
     llm = FakeLlm()
     code_of_failed_reply(llm, "llm_unavailable")
 
-    reply = llm.generate_reply("Test instructions", visitor_says("llm_unavailable"))
+    reply = llm.generate_reply("Test instructions", visitor_says("llm_unavailable")).reply
 
     assert reply.kind == "casual"
 
