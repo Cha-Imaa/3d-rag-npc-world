@@ -28,6 +28,9 @@ LlmErrorCode = Literal[
     "llm_bad_reply",  # The model answered, but not with a usable reply.
 ]
 
+# What a reply is based on. ARCHITECTURE.md explains each kind.
+ReplyKind = Literal["casual", "grounded", "no_evidence"]
+
 # Long enough to see the chat panel's thinking state when using the fake LLM.
 FAKE_REPLY_DELAY_SECONDS = 1
 
@@ -50,7 +53,7 @@ class ChatMessage(BaseModel):
 class NpcReply(BaseModel):
     """The structured reply the model must return. ARCHITECTURE.md explains each field."""
 
-    kind: Literal["casual", "grounded", "no_evidence"]
+    kind: ReplyKind
     answer: str
     citation_ids: list[str]
     referral_npc_id: str | None

@@ -155,7 +155,8 @@ def send_chat_message(
 
     Raises:
         NpcNotFoundError: If the NPC does not exist or is disabled.
-        LlmError: If no usable reply was produced.
+        LlmError: If no usable reply was produced, including a "grounded" reply while
+            there are no documents.
     """
     npc = find_enabled_npc(npcs, chat_request.npc_id)
     if npc is None:
@@ -164,6 +165,13 @@ def send_chat_message(
     # Only the new message for now. Earlier messages are added once they are saved.
     messages = [ChatMessage(role="user", content=chat_request.message)]
     generated = llm.generate_reply(build_instructions(npc), messages)
+    # Logged before any check below, because a rejected reply is still paid for.
     log_token_usage(npc.id, generated.usage)
+
+    # There are no documents yet, so a "grounded" reply claims evidence it cannot have.
+    # It fails like any unusable reply, which lets the visitor try again.
+    if generated.reply.kind == "grounded":
+        logger.warning("Chat reply rejected: npc_id=%s claimed grounded", npc.id)
+        raise LlmError("llm_bad_reply")
 
     return ChatResponse(answer=generated.reply.answer)

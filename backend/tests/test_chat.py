@@ -14,7 +14,15 @@ from app.chat import (
     SHARED_RULES,
     build_instructions,
 )
-from app.llm import ChatMessage, FakeLlm, GeneratedReply, LlmErrorCode, NpcReply, TokenUsage
+from app.llm import (
+    ChatMessage,
+    FakeLlm,
+    GeneratedReply,
+    LlmErrorCode,
+    NpcReply,
+    ReplyKind,
+    TokenUsage,
+)
 from app.main import app, get_llm, get_npcs
 from app.npcs import NpcConfig, ScenePosition
 
@@ -28,13 +36,15 @@ class RecordingLlm:
         self.calls: list[tuple[str, list[ChatMessage]]] = []
         # A test can set this to None to act like OpenAI leaving the counts out.
         self.usage: TokenUsage | None = TokenUsage(input_tokens=100, output_tokens=20)
+        # A test can set this to "grounded" to act like the model breaking the rules.
+        self.kind: ReplyKind = "no_evidence"
 
     def generate_reply(self, instructions: str, messages: list[ChatMessage]) -> GeneratedReply:
         """Record the call, and answer with values the server has not checked."""
         self.calls.append((instructions, messages))
 
         reply = NpcReply(
-            kind="grounded",
+            kind=self.kind,
             answer="A test answer",
             citation_ids=["made-up-citation"],
             referral_npc_id="made-up-npc",
@@ -248,3 +258,23 @@ def test_a_failed_reply_is_an_error_and_a_retry_can_recover(
     assert failed.status_code == 503
     assert failed.json() == {"error": {"code": code, "message": LLM_ERROR_MESSAGES[code]}}
     assert retried.status_code == 200
+
+
+def test_rejects_a_grounded_reply_while_there_are_no_documents(
+    client: TestClient, llm: RecordingLlm, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A reply claiming document evidence must not reach the visitor before documents exist."""
+    llm.kind = "grounded"
+
+    with caplog.at_level(logging.INFO, logger="app"):
+        response = client.post(
+            "/api/chat", json={"npc_id": "first", "message": "Hello"}, headers=VISITOR_HEADERS
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": {"code": "llm_bad_reply", "message": LLM_ERROR_MESSAGES["llm_bad_reply"]}
+    }
+    # The rejected reply was still paid for, so its cost is logged too.
+    assert "Chat reply: npc_id=first input_tokens=100 output_tokens=20" in caplog.messages
+    assert "Chat reply rejected: npc_id=first claimed grounded" in caplog.messages
