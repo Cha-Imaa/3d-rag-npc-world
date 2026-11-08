@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.llm import (
+    FAKE_EMBEDDING_DIMENSIONS,
     FAKE_REPLY_DELAY_SECONDS,
     ChatMessage,
     FakeLlm,
@@ -11,6 +12,7 @@ from app.llm import (
     OpenAiLlm,
     TokenUsage,
     create_llm,
+    fake_embedding,
 )
 from app.main import app
 from app.settings import Settings
@@ -115,3 +117,42 @@ def test_the_server_starts_with_the_chosen_llm(
 
     with TestClient(app):
         assert isinstance(app.state.llm, expected_class)
+
+
+def similarity(first: list[float], second: list[float]) -> float:
+    """Compare two fake vectors. They have length 1, so this is cosine similarity."""
+    return sum(a * b for a, b in zip(first, second, strict=True))
+
+
+def test_a_fake_embedding_has_the_set_length_and_is_scaled_to_one() -> None:
+    vector = fake_embedding("The Salt Wind blows in spring")
+
+    assert len(vector) == FAKE_EMBEDDING_DIMENSIONS
+    assert similarity(vector, vector) == pytest.approx(1.0)
+
+
+def test_the_same_text_always_gets_the_same_fake_embedding() -> None:
+    assert fake_embedding("Lantern Hill") == fake_embedding("Lantern Hill")
+
+
+def test_capitals_and_punctuation_do_not_change_a_fake_embedding() -> None:
+    assert fake_embedding("Salt Wind!") == fake_embedding("salt wind")
+
+
+def test_texts_sharing_words_are_more_similar_than_unrelated_texts() -> None:
+    question = fake_embedding("When does the Salt Wind blow?")
+    related = fake_embedding("The Salt Wind blows from the sea every spring.")
+    unrelated = fake_embedding("Graft the apple branch in early March.")
+
+    assert similarity(question, related) > similarity(question, unrelated)
+
+
+def test_a_text_without_words_gets_a_zero_fake_embedding() -> None:
+    assert fake_embedding("?!  ...") == [0.0] * FAKE_EMBEDDING_DIMENSIONS
+
+
+def test_the_fake_embeds_each_text_in_order_using_no_tokens() -> None:
+    embedded = FakeLlm().embed_texts(["first text", "second text"])
+
+    assert embedded.vectors == [fake_embedding("first text"), fake_embedding("second text")]
+    assert embedded.input_tokens == 0

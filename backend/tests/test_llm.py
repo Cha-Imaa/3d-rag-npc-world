@@ -10,7 +10,7 @@ from collections.abc import Callable
 import httpx2
 import pytest
 
-from app.llm import ChatMessage, LlmError, NpcReply, OpenAiLlm, TokenUsage
+from app.llm import EMBEDDING_BATCH_SIZE, ChatMessage, LlmError, NpcReply, OpenAiLlm, TokenUsage
 from app.settings import Settings
 
 MESSAGES = [
@@ -90,6 +90,7 @@ def make_llm(handler: Callable[[httpx2.Request], httpx2.Response]) -> OpenAiLlm:
         openai_api_key="test-key",
         openai_chat_model="test-model",
         openai_reasoning_effort="none",
+        openai_embedding_model="test-embedding-model",
     )
     http_client = httpx2.Client(transport=httpx2.MockTransport(handler))
 
@@ -234,3 +235,106 @@ def test_a_blank_answer_is_rejected() -> None:
     code = code_of_failed_reply(lambda request: response_with_text(json.dumps(reply)))
 
     assert code == "llm_bad_reply"
+
+
+def embedding_response(request: httpx2.Request) -> httpx2.Response:
+    """Answer an embedding request the way OpenAI does, with vectors listed in reverse.
+
+    Each vector is [position, length of text], so a test can tell which text it belongs
+    to. Listing them backwards checks that the code sorts by position. Each text costs
+    one token per character.
+    """
+    texts = json.loads(request.content)["input"]
+    data = [
+        {"object": "embedding", "index": index, "embedding": [float(index), float(len(text))]}
+        for index, text in enumerate(texts)
+    ]
+    data.reverse()
+    total_characters = sum(len(text) for text in texts)
+    body = {
+        "object": "list",
+        "data": data,
+        "model": "test-embedding-model",
+        "usage": {"prompt_tokens": total_characters, "total_tokens": total_characters},
+    }
+
+    return httpx2.Response(200, json=body)
+
+
+def test_embeddings_come_back_in_the_order_of_the_texts() -> None:
+    llm = make_llm(embedding_response)
+
+    embedded = llm.embed_texts(["a", "bb", "ccc"])
+
+    assert embedded.vectors == [[0.0, 1.0], [1.0, 2.0], [2.0, 3.0]]
+    assert embedded.input_tokens == 6
+
+
+def test_the_embedding_request_carries_the_model_and_texts() -> None:
+    sent_requests = []
+
+    def record_request(request: httpx2.Request) -> httpx2.Response:
+        sent_requests.append(json.loads(request.content))
+        return embedding_response(request)
+
+    make_llm(record_request).embed_texts(["first text", "second text"])
+
+    body = sent_requests[0]
+    assert body["model"] == "test-embedding-model"
+    assert body["input"] == ["first text", "second text"]
+    assert body["encoding_format"] == "float"
+
+
+def test_many_texts_are_sent_in_batches_and_their_tokens_added_up() -> None:
+    batch_sizes = []
+
+    def record_batch(request: httpx2.Request) -> httpx2.Response:
+        batch_sizes.append(len(json.loads(request.content)["input"]))
+        return embedding_response(request)
+
+    texts = ["x"] * (EMBEDDING_BATCH_SIZE + 1)
+
+    embedded = make_llm(record_batch).embed_texts(texts)
+
+    assert batch_sizes == [EMBEDDING_BATCH_SIZE, 1]
+    assert len(embedded.vectors) == len(texts)
+    assert embedded.input_tokens == len(texts)
+
+
+def test_no_texts_make_no_request() -> None:
+    def fail_if_called(request: httpx2.Request) -> httpx2.Response:
+        raise AssertionError("No request should be sent")
+
+    embedded = make_llm(fail_if_called).embed_texts([])
+
+    assert embedded.vectors == []
+    assert embedded.input_tokens == 0
+
+
+def test_embedding_without_a_key_fails_without_any_network_call() -> None:
+    llm = OpenAiLlm(Settings(_env_file=None, openai_api_key=None))
+
+    with pytest.raises(LlmError) as error_info:
+        llm.embed_texts(["Some text"])
+
+    assert error_info.value.code == "llm_not_configured"
+
+
+@pytest.mark.parametrize(
+    ("status", "openai_code", "expected_code"),
+    [
+        (401, None, "llm_not_configured"),
+        (429, "insufficient_quota", "llm_out_of_credit"),
+        (429, "rate_limit_exceeded", "llm_unavailable"),
+        (500, None, "llm_unavailable"),
+    ],
+)
+def test_embedding_errors_use_the_same_codes_as_replies(
+    status: int, openai_code: str | None, expected_code: str
+) -> None:
+    llm = make_llm(lambda request: error_response(status, openai_code))
+
+    with pytest.raises(LlmError) as error_info:
+        llm.embed_texts(["Some text"])
+
+    assert error_info.value.code == expected_code

@@ -10,6 +10,7 @@ SETTING_NAMES = [
     "OPENAI_API_KEY",
     "OPENAI_CHAT_MODEL",
     "OPENAI_REASONING_EFFORT",
+    "OPENAI_EMBEDDING_MODEL",
     "USE_FAKE_LLM",
 ]
 
@@ -34,6 +35,7 @@ def test_defaults_apply_without_an_env_file() -> None:
     assert settings.openai_api_key is None
     assert settings.openai_chat_model == "gpt-6-luna"
     assert settings.openai_reasoning_effort == "none"
+    assert settings.openai_embedding_model == "text-embedding-3-small"
     assert settings.use_fake_llm is False
 
 
