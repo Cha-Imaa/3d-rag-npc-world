@@ -1,0 +1,15 @@
+Every document in this folder is original test material, written for Loreland.
+The places, people, dates, and numbers are invented, so a correct answer can only
+come from these documents and not from what a language model already knows.
+No third-party text is included.
+
+Each subfolder is one knowledge base, named after the knowledge_base_id in
+data/npcs/:
+
+  test-collection-one/    weather-record.txt, lantern-hill-almanac.pdf (3 pages)
+  test-collection-two/    orchard-ledger.txt, grafting-notes.txt
+  test-collection-three/  bridge-repair-log.txt, quarry-stone-guide.txt
+
+The almanac PDF was generated from plain text with the fpdf2 library, using the
+built-in Helvetica font, one season per page. It has a real text layer, so pypdf
+can read it page by page.
