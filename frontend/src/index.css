@@ -130,11 +130,57 @@ body,
   font-size: 1.1rem;
 }
 
-/* Takes the spare height, which pushes the message box to the bottom of the panel */
-.chat-panel-empty {
+/* Takes the spare height, which pushes the message box to the bottom of the panel.
+   The zero minimum lets it scroll instead of stretching the panel. */
+.chat-panel-messages {
   flex: 1;
-  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.chat-message {
+  max-width: 85%;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: #efe6d8;
+}
+
+.chat-message-visitor {
+  align-self: flex-end;
+  background: #dfe8d3;
+}
+
+.chat-message-speaker {
+  font-size: 12px;
   color: #6b5d4f;
+}
+
+/* Keep the visitor's line breaks, and wrap long unbroken text instead of overflowing. */
+.chat-message p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.chat-panel-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 14px;
+  color: #a03020;
+}
+
+.chat-panel-error p {
+  margin: 0;
+}
+
+/* Long error text wraps, so the button keeps its size */
+.chat-panel-error button {
+  flex-shrink: 0;
 }
 
 .chat-panel-form {

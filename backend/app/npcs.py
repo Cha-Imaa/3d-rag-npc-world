@@ -129,3 +129,20 @@ def list_public_npcs(npcs: list[NpcConfig]) -> list[PublicNpc]:
         for npc in npcs
         if npc.enabled
     ]
+
+
+def find_enabled_npc(npcs: list[NpcConfig], npc_id: str) -> NpcConfig | None:
+    """Find the NPC a visitor can talk to.
+
+    Args:
+        npcs: The configured NPCs.
+        npc_id: The ID to look for.
+
+    Returns:
+        The matching NPC, or None if it does not exist or is disabled.
+    """
+    for npc in npcs:
+        if npc.id == npc_id and npc.enabled:
+            return npc
+
+    return None
