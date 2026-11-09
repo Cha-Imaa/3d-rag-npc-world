@@ -31,7 +31,7 @@ function typeMessage(messageBox: HTMLTextAreaElement, text: string) {
 
 beforeEach(() => {
   sendChatMessageMock.mockReset()
-  sendChatMessageMock.mockResolvedValue({ answer: 'A reply.' })
+  sendChatMessageMock.mockResolvedValue({ answer: 'A reply.', citations: [] })
 })
 
 afterEach(() => {
@@ -79,6 +79,49 @@ describe('ChatPanel', () => {
     expect(messageBox.value).toBe('')
   })
 
+  it("lists an answer's sources, each opening to show its passage", async () => {
+    sendChatMessageMock.mockResolvedValue({
+      answer: 'The well is forty feet deep.',
+      citations: [
+        {
+          id: 'almanac.pdf#2',
+          title: 'Almanac',
+          source_file: 'almanac.pdf',
+          page: 2,
+          section: null,
+          text: 'The old well is forty feet deep.',
+        },
+        {
+          id: 'notes.md#1',
+          title: 'Notes',
+          source_file: 'notes.md',
+          page: null,
+          section: 'Wells',
+          text: 'Wells are checked each spring.',
+        },
+      ],
+    })
+    const { messageBox, sendButton } = renderPanel()
+
+    typeMessage(messageBox, 'How deep is the well?')
+    fireEvent.click(sendButton)
+
+    expect(await screen.findByText('Sources')).toBeTruthy()
+    expect(screen.getByText('Almanac, page 2')).toBeTruthy()
+    expect(screen.getByText('Notes, Wells')).toBeTruthy()
+    expect(screen.getByText('The old well is forty feet deep.')).toBeTruthy()
+  })
+
+  it('shows no sources heading for an answer without citations', async () => {
+    const { messageBox, sendButton } = renderPanel()
+
+    typeMessage(messageBox, 'Hello')
+    fireEvent.click(sendButton)
+
+    expect(await screen.findByText('A reply.')).toBeTruthy()
+    expect(screen.queryByText('Sources')).toBeNull()
+  })
+
   it('shows the thinking note and blocks sending until the reply arrives', async () => {
     let deliverReply: (reply: ChatReply) => void = () => {}
     sendChatMessageMock.mockReturnValue(
@@ -97,7 +140,7 @@ describe('ChatPanel', () => {
     expect(sendButton.disabled).toBe(true)
     expect(sendChatMessageMock).toHaveBeenCalledOnce()
 
-    deliverReply({ answer: 'A late reply.' })
+    deliverReply({ answer: 'A late reply.', citations: [] })
 
     expect(await screen.findByText('A late reply.')).toBeTruthy()
     expect(screen.queryByText('Test NPC is thinking…')).toBeNull()
@@ -267,7 +310,7 @@ describe('ChatPanel', () => {
     // The button is gone, so the cursor has to go somewhere useful.
     expect(document.activeElement).toBe(messageBox)
 
-    deliverReply({ answer: 'A late reply.' })
+    deliverReply({ answer: 'A late reply.', citations: [] })
 
     expect(await screen.findByText('A late reply.')).toBeTruthy()
   })

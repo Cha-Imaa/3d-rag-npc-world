@@ -165,6 +165,27 @@ body,
   white-space: pre-wrap;
 }
 
+/* Sources under an NPC's answer. A plain first version, to be restyled later. */
+.citation-list {
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.citation-list-heading {
+  font-size: 12px;
+  color: #6b5d4f;
+}
+
+.citation summary {
+  cursor: pointer;
+}
+
+.citation p {
+  margin: 4px 0 6px;
+  padding-left: 8px;
+  border-left: 2px solid #c9b79c;
+}
+
 .chat-panel-error {
   display: flex;
   align-items: center;

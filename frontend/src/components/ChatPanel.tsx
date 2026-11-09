@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
-import { ChatError, sendChatMessage } from '../api/chat'
+import { ChatError, sendChatMessage, type Citation } from '../api/chat'
 import type { Npc } from '../api/npcs'
+import { CitationList } from './CitationList'
 
 /** The server refuses longer messages, so the panel stops them before sending. */
 const MAX_MESSAGE_CHARACTERS = 2000
@@ -11,6 +12,8 @@ const FALLBACK_ERROR_MESSAGE = 'Something went wrong. Please try again.'
 type ChatMessage = {
   speaker: 'visitor' | 'npc'
   text: string
+  /** The sources an NPC's answer relied on. Always empty for the visitor's messages. */
+  citations: Citation[]
 }
 
 /** A message that got no reply, and the plain reason to show the visitor. */
@@ -54,9 +57,9 @@ export function ChatPanel({ npc, onClose }: { npc: Npc; onClose: () => void }) {
     }
   }, [messages, isWaitingForReply])
 
-  /** Add one message to the end of the conversation. */
-  function addMessage(speaker: ChatMessage['speaker'], text: string) {
-    setMessages((currentMessages) => [...currentMessages, { speaker, text }])
+  /** Add one message, and any sources it has, to the end of the conversation. */
+  function addMessage(speaker: ChatMessage['speaker'], text: string, citations: Citation[] = []) {
+    setMessages((currentMessages) => [...currentMessages, { speaker, text, citations }])
   }
 
   /**
@@ -72,7 +75,7 @@ export function ChatPanel({ npc, onClose }: { npc: Npc; onClose: () => void }) {
 
     try {
       const reply = await sendChatMessage(npc.id, visitorMessage)
-      addMessage('npc', reply.answer)
+      addMessage('npc', reply.answer, reply.citations)
     } catch (error) {
       const reason = error instanceof ChatError ? error.message : FALLBACK_ERROR_MESSAGE
       setFailedSend({ message: visitorMessage, reason })
@@ -132,6 +135,7 @@ export function ChatPanel({ npc, onClose }: { npc: Npc; onClose: () => void }) {
               {chatMessage.speaker === 'visitor' ? 'You' : npc.display_name}
             </span>
             <p>{chatMessage.text}</p>
+            <CitationList citations={chatMessage.citations} />
           </div>
         ))}
 
