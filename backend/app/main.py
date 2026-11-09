@@ -10,8 +10,14 @@ from fastapi import Depends, FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from app.chat import LLM_ERROR_MESSAGES, ChatRequest, ChatResponse, build_instructions
-from app.llm import ChatMessage, FakeLlm, LlmError, OpenAiLlm, TokenUsage, create_llm
+from app.chat import (
+    LLM_ERROR_MESSAGES,
+    ChatRequest,
+    ChatResponse,
+    build_instructions,
+    build_messages,
+)
+from app.llm import FakeLlm, LlmError, OpenAiLlm, TokenUsage, create_llm
 from app.npcs import NpcConfig, PublicNpc, find_enabled_npc, list_public_npcs, load_npcs
 from app.settings import Settings
 
@@ -163,7 +169,7 @@ def send_chat_message(
         raise NpcNotFoundError
 
     # Only the new message for now. Earlier messages are added once they are saved.
-    messages = [ChatMessage(role="user", content=chat_request.message)]
+    messages = build_messages(chat_request.message, passages=[])
     generated = llm.generate_reply(build_instructions(npc), messages)
     # Logged before any check below, because a rejected reply is still paid for.
     log_token_usage(npc.id, generated.usage)
