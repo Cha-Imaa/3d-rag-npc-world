@@ -1,16 +1,33 @@
-"""Ingestion: read an NPC's source documents and split them into chunks with source details."""
+"""Ingestion: read an NPC's source documents, split them into chunks, and save a search index.
 
+Build every index with `uv run python -m app.ingest`, or name knowledge bases to build only those.
+"""
+
+import argparse
+import json
 import logging
 import re
+import sys
 from pathlib import Path
 
+import numpy as np
 from pydantic import BaseModel
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
+from app.llm import FakeLlm, LlmError, OpenAiLlm, create_llm
+from app.npcs import NpcConfigError, load_npcs
+from app.settings import Settings
+
 logger = logging.getLogger(__name__)
 
-SOURCES_DIRECTORY = Path(__file__).resolve().parents[2] / "data" / "sources"
+DATA_DIRECTORY = Path(__file__).resolve().parents[2] / "data"
+SOURCES_DIRECTORY = DATA_DIRECTORY / "sources"
+INDEXES_DIRECTORY = DATA_DIRECTORY / "indexes"
+
+# The two files in each index folder, data/indexes/<knowledge_base_id>/.
+EMBEDDINGS_FILE_NAME = "embeddings.npy"
+CHUNKS_FILE_NAME = "chunks.json"
 
 SUPPORTED_SUFFIXES = {".txt", ".md", ".pdf"}
 
@@ -314,3 +331,214 @@ def chunk_knowledge_base(folder: Path) -> list[Chunk]:
         chunks.extend(chunk_document(read_document(path)))
 
     return chunks
+
+
+class SearchIndex(BaseModel):
+    """One knowledge base's chunks and their embeddings, ready to search.
+
+    Row i of embeddings belongs to chunks[i]. Each row has length 1, or is all zeros for a
+    chunk with no words, so a search can score every chunk with one matrix multiplication.
+    """
+
+    # NumPy arrays are not a Pydantic type, so allow them here.
+    model_config = {"arbitrary_types_allowed": True}
+
+    knowledge_base_id: str
+    # The model that made the vectors. A search must embed its question with the same one.
+    embedding_model: str
+    chunks: list[Chunk]
+    embeddings: np.ndarray
+
+
+def scale_rows_to_length_one(matrix: np.ndarray) -> np.ndarray:
+    """Scale each row to length 1, so a dot product between rows is their cosine similarity.
+
+    All-zero rows stay all zeros instead of being divided by zero.
+    """
+    lengths = np.linalg.norm(matrix, axis=1, keepdims=True)
+    lengths[lengths == 0] = 1.0
+    return matrix / lengths
+
+
+def build_index(knowledge_base_id: str, llm: OpenAiLlm | FakeLlm) -> tuple[SearchIndex, int]:
+    """Chunk and embed one knowledge base from data/sources.
+
+    Args:
+        knowledge_base_id: The folder name in data/sources.
+        llm: What makes the embeddings. The real one costs a little credit.
+
+    Returns:
+        The index, and the input tokens the embeddings used.
+
+    Raises:
+        IngestError: If the folder is missing, a file can't be read, or there is no text.
+        LlmError: If the embeddings could not be made.
+    """
+    chunks = chunk_knowledge_base(SOURCES_DIRECTORY / knowledge_base_id)
+    if not chunks:
+        # An empty index would let the NPC answer nothing, which is more likely a mistake,
+        # such as a folder of scanned PDFs, than something wanted.
+        raise IngestError(f"{knowledge_base_id}: no readable text to index")
+
+    embedded = llm.embed_texts([chunk.text for chunk in chunks])
+    # float32 halves the file size, and is far more precise than search needs.
+    embeddings = scale_rows_to_length_one(np.array(embedded.vectors, dtype=np.float32))
+
+    index = SearchIndex(
+        knowledge_base_id=knowledge_base_id,
+        embedding_model=llm.embedding_model,
+        chunks=chunks,
+        embeddings=embeddings,
+    )
+    return index, embedded.input_tokens
+
+
+def save_index(index: SearchIndex, indexes_directory: Path = INDEXES_DIRECTORY) -> Path:
+    """Write an index to <indexes_directory>/<knowledge_base_id>/, replacing any old one.
+
+    Args:
+        index: The index to save.
+        indexes_directory: The parent folder. Tests pass a temporary one.
+
+    Returns:
+        The index folder.
+    """
+    folder = indexes_directory / index.knowledge_base_id
+    folder.mkdir(parents=True, exist_ok=True)
+
+    np.save(folder / EMBEDDINGS_FILE_NAME, index.embeddings, allow_pickle=False)
+
+    details = {
+        "knowledge_base_id": index.knowledge_base_id,
+        "embedding_model": index.embedding_model,
+        "chunks": [chunk.model_dump() for chunk in index.chunks],
+    }
+    # Written second, so if writing stops part way, the row count check in load_index
+    # will most likely catch the mismatch.
+    (folder / CHUNKS_FILE_NAME).write_text(
+        json.dumps(details, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    return folder
+
+
+def load_index(
+    knowledge_base_id: str,
+    embedding_model: str,
+    indexes_directory: Path = INDEXES_DIRECTORY,
+) -> SearchIndex:
+    """Read a saved index and check it can be searched with the given embedding model.
+
+    Args:
+        knowledge_base_id: The index to read.
+        embedding_model: The model that will embed questions. It must match the index's.
+        indexes_directory: The parent folder. Tests pass a temporary one.
+
+    Returns:
+        The index.
+
+    Raises:
+        IngestError: If the index is missing, damaged, or made by a different model.
+    """
+    folder = indexes_directory / knowledge_base_id
+    rebuild_hint = f"Rebuild it with: uv run python -m app.ingest {knowledge_base_id}"
+
+    try:
+        details = json.loads((folder / CHUNKS_FILE_NAME).read_text(encoding="utf-8"))
+        # allow_pickle=False stops a tampered file from running code when it is loaded.
+        embeddings = np.load(folder / EMBEDDINGS_FILE_NAME, allow_pickle=False)
+        chunks = [Chunk.model_validate(chunk) for chunk in details["chunks"]]
+        saved_model = details["embedding_model"]
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        # ValueError covers bad JSON, a bad .npy file, and a chunk that fails validation.
+        message = f"Index {knowledge_base_id} is missing or damaged. {rebuild_hint}"
+        raise IngestError(message) from error
+
+    if saved_model != embedding_model:
+        # Vectors from different models don't mean the same thing, so search would be noise.
+        raise IngestError(
+            f"Index {knowledge_base_id} was built with {saved_model}, "
+            f"but questions are embedded with {embedding_model}. {rebuild_hint}"
+        )
+
+    if embeddings.ndim != 2 or embeddings.shape[0] != len(chunks):
+        raise IngestError(f"Index {knowledge_base_id} has mismatched files. {rebuild_hint}")
+
+    return SearchIndex(
+        knowledge_base_id=knowledge_base_id,
+        embedding_model=saved_model,
+        chunks=chunks,
+        embeddings=embeddings,
+    )
+
+
+def choose_knowledge_bases(requested: list[str], configured: list[str]) -> list[str]:
+    """Pick which knowledge bases to build.
+
+    Args:
+        requested: The IDs named on the command line. Empty means all of them.
+        configured: The knowledge base IDs in the NPC files.
+
+    Returns:
+        The IDs to build.
+
+    Raises:
+        IngestError: If a requested ID is not used by any NPC.
+    """
+    unknown = [name for name in requested if name not in configured]
+    if unknown:
+        raise IngestError(f"No NPC uses these knowledge bases: {unknown}. Known: {configured}")
+
+    return requested or configured
+
+
+def main(arguments: list[str] | None = None) -> int:
+    """Build search indexes from the command line.
+
+    Args:
+        arguments: The command line arguments. None reads the real ones.
+
+    Returns:
+        0 if every index was built, or 1 after printing what went wrong.
+    """
+    parser = argparse.ArgumentParser(
+        prog="python -m app.ingest",
+        description="Build the search index for each NPC knowledge base, from data/sources.",
+    )
+    parser.add_argument(
+        "knowledge_base_ids",
+        nargs="*",
+        help="the knowledge bases to build. Leave out to build every one an NPC uses.",
+    )
+    options = parser.parse_args(arguments)
+
+    # Show the warnings ingestion logs, such as skipped files.
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+    try:
+        configured = [npc.knowledge_base_id for npc in load_npcs()]
+        knowledge_base_ids = choose_knowledge_bases(options.knowledge_base_ids, configured)
+        llm = create_llm(Settings())
+
+        for knowledge_base_id in knowledge_base_ids:
+            index, input_tokens = build_index(knowledge_base_id, llm)
+            folder = save_index(index)
+            print(
+                f"Built {knowledge_base_id}: {len(index.chunks)} chunks, "
+                f"{input_tokens} tokens, model {index.embedding_model}, saved to {folder}"
+            )
+    except (IngestError, NpcConfigError) as error:
+        print(f"Stopped: {error}", file=sys.stderr)
+        return 1
+    except LlmError as error:
+        print(f"Stopped: embeddings failed with {error.code}.", file=sys.stderr)
+        if error.code == "llm_not_configured":
+            hint = "Set OPENAI_API_KEY in .env, or USE_FAKE_LLM=true for a free fake index."
+            print(hint, file=sys.stderr)
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

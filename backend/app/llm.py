@@ -44,6 +44,9 @@ EMBEDDING_BATCH_SIZE = 100
 # The length of each fake embedding. Enough slots that unrelated words rarely share one.
 FAKE_EMBEDDING_DIMENSIONS = 256
 
+# The name saved with an index built by the fake, so it is never searched with real vectors.
+FAKE_EMBEDDING_MODEL = "fake-word-counts"
+
 
 class LlmError(Exception):
     """A reply could not be produced, so the visitor must see an error and not an answer."""
@@ -148,6 +151,8 @@ class OpenAiLlm:
         """
         self.settings = settings
         self.client = None
+        # Saved with each search index, so an index is only searched with matching vectors.
+        self.embedding_model = settings.openai_embedding_model
 
         # Without a key the server still starts, and only chat fails. See generate_reply.
         if settings.openai_api_key is not None:
@@ -285,6 +290,7 @@ class FakeLlm:
         """
         self.reply_delay_seconds = reply_delay_seconds
         self.last_failed_code = None
+        self.embedding_model = FAKE_EMBEDDING_MODEL
 
     def generate_reply(self, instructions: str, messages: list[ChatMessage]) -> GeneratedReply:
         """Answer like OpenAiLlm.generate_reply, without any network call.
