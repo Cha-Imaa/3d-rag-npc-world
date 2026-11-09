@@ -1,6 +1,7 @@
 """LLM access: the only module that talks to OpenAI."""
 
 import hashlib
+import html
 import math
 import re
 import time
@@ -46,6 +47,9 @@ FAKE_EMBEDDING_DIMENSIONS = 256
 
 # The name saved with an index built by the fake, so it is never searched with real vectors.
 FAKE_EMBEDDING_MODEL = "fake-word-counts"
+
+# Finds the id in each <passage id="..."> tag that chat.format_passages writes.
+PASSAGE_ID_PATTERN = re.compile(r'<passage id="([^"]*)"')
 
 
 class LlmError(Exception):
@@ -272,6 +276,23 @@ def fake_embedding(text: str) -> list[float]:
     return [value / length for value in vector]
 
 
+def find_passage_ids(messages: list[ChatMessage]) -> list[str]:
+    """Read the passage IDs out of the tagged passages the server sends the model.
+
+    Args:
+        messages: The messages to look through.
+
+    Returns:
+        Each passage ID, in the order sent. Escaped characters are turned back.
+    """
+    passage_ids = []
+    for message in messages:
+        for escaped_id in PASSAGE_ID_PATTERN.findall(message.content):
+            passage_ids.append(html.unescape(escaped_id))
+
+    return passage_ids
+
+
 class FakeLlm:
     """Stands in for OpenAI, so chat and search can be built and tested with no key and no cost.
 
@@ -300,7 +321,8 @@ class FakeLlm:
             messages: The conversation so far, ending with the visitor's new message.
 
         Returns:
-            A casual reply that repeats the visitor's message, using zero tokens.
+            A reply that repeats the visitor's message, using zero tokens. It is grounded
+            and cites every passage when the server sent passages, and casual otherwise.
 
         Raises:
             LlmError: If the message is an error code that did not just fail.
@@ -314,13 +336,26 @@ class FakeLlm:
 
         self.last_failed_code = None
 
-        reply = NpcReply(
-            kind="casual",
-            answer=f"[Fake reply] You said: {visitor_message}",
-            citation_ids=[],
-            referral_npc_id=None,
-            referral_reason=None,
-        )
+        # Cite every passage the server found, so citations can be tried at no cost.
+        # The fake can't tell whether they answer the question, but the real model can.
+        passage_ids = find_passage_ids(messages[:-1])
+        if passage_ids:
+            found = f"Found {len(passage_ids)} passages."
+            reply = NpcReply(
+                kind="grounded",
+                answer=f"[Fake reply] {found} You said: {visitor_message}",
+                citation_ids=passage_ids,
+                referral_npc_id=None,
+                referral_reason=None,
+            )
+        else:
+            reply = NpcReply(
+                kind="casual",
+                answer=f"[Fake reply] You said: {visitor_message}",
+                citation_ids=[],
+                referral_npc_id=None,
+                referral_reason=None,
+            )
 
         # Zero is the true count here: the fake spends nothing.
         return GeneratedReply(reply=reply, usage=TokenUsage(input_tokens=0, output_tokens=0))

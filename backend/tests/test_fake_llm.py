@@ -3,6 +3,8 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from app.chat import build_messages
+from app.ingest import Chunk
 from app.llm import (
     FAKE_EMBEDDING_DIMENSIONS,
     FAKE_REPLY_DELAY_SECONDS,
@@ -15,6 +17,7 @@ from app.llm import (
     fake_embedding,
 )
 from app.main import app
+from app.retrieval import RetrievedPassage
 from app.settings import Settings
 
 
@@ -49,6 +52,31 @@ def test_a_reply_claims_no_sources_or_referrals() -> None:
     assert reply.citation_ids == []
     assert reply.referral_npc_id is None
     assert reply.referral_reason is None
+
+
+def test_a_reply_cites_every_passage_the_server_sent() -> None:
+    """Uses the server's own passage format, so the fake keeps up if that format changes."""
+    passages = [
+        RetrievedPassage(
+            chunk=Chunk(
+                id=chunk_id,
+                source_file="notes.txt",
+                title="Notes",
+                page=None,
+                section=None,
+                text="Some text.",
+            ),
+            score=0.5,
+        )
+        for chunk_id in ["notes.txt#1", 'odd"name.txt#2']
+    ]
+    messages = build_messages("How deep is the well?", passages)
+
+    reply = FakeLlm().generate_reply("Test instructions", messages).reply
+
+    assert reply.kind == "grounded"
+    assert reply.citation_ids == ["notes.txt#1", 'odd"name.txt#2']
+    assert reply.answer == "[Fake reply] Found 2 passages. You said: How deep is the well?"
 
 
 def test_a_reply_uses_no_tokens() -> None:
