@@ -24,8 +24,10 @@ MAX_PASSAGES = 4
 
 # Passages scoring below this are clearly unrelated and are dropped. It is deliberately
 # loose, because the model makes the final call on whether a passage answers the question.
-# A starting value, to be tuned on the test questions with real embeddings.
-SCORE_FLOOR = 0.2
+# Tuned on data/eval/questions.toml with text-embedding-3-small: the best right passage
+# scored at least 0.34, and questions that should find nothing scored at most 0.26.
+# Retune it after changing the embedding model or adding very different documents.
+SCORE_FLOOR = 0.3
 
 
 class RetrievedPassage(BaseModel):

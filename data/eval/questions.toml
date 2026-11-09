@@ -1,0 +1,135 @@
+# Test questions for checking retrieval and tuning the score floor.
+#
+# Each question is asked of one NPC, so only that NPC's knowledge base is searched.
+#
+#   npc_id            The NPC the question is asked of.
+#   question          What the visitor types.
+#   expected_sources  The source files that should answer it. An empty list means nothing
+#                     in this NPC's knowledge base should help, so ideally no passage passes
+#                     the score floor.
+#   purpose           Why the question is here:
+#                       "own"       answered by this NPC's own documents, often in other words
+#                       "isolation" a fact that exists only in another NPC's documents
+#                       "unrelated" nothing to do with any document
+#
+# Every fact comes from the invented test documents in data/sources/.
+
+# --- Answered by the NPC's own documents ---
+
+[[questions]]
+npc_id = "placeholder-one"
+question = "Who built the weather station, and in which year?"
+expected_sources = ["weather-record.txt"]
+purpose = "own"
+
+[[questions]]
+npc_id = "placeholder-one"
+question = "What do people on the hill call the wind that blows from the east?"
+expected_sources = ["weather-record.txt"]
+purpose = "own"
+
+[[questions]]
+npc_id = "placeholder-one"
+question = "When is it time for farmers on the hill to plant barley?"
+expected_sources = ["lantern-hill-almanac.pdf"]
+purpose = "own"
+
+[[questions]]
+npc_id = "placeholder-one"
+question = "How deep did the snow get in the worst winter?"
+expected_sources = ["lantern-hill-almanac.pdf"]
+purpose = "own"
+
+[[questions]]
+npc_id = "placeholder-two"
+question = "How many trees are in the orchard today?"
+expected_sources = ["orchard-ledger.txt"]
+purpose = "own"
+
+[[questions]]
+npc_id = "placeholder-two"
+question = "Is there a tree that grows two different kinds of fruit?"
+expected_sources = ["grafting-notes.txt"]
+purpose = "own"
+
+[[questions]]
+npc_id = "placeholder-two"
+question = "What do you seal a fresh graft with?"
+expected_sources = ["grafting-notes.txt"]
+purpose = "own"
+
+[[questions]]
+npc_id = "placeholder-two"
+question = "How do the keepers protect the blossom on a frosty night?"
+expected_sources = ["orchard-ledger.txt"]
+purpose = "own"
+
+[[questions]]
+npc_id = "placeholder-three"
+question = "How heavy can a cart be and still cross the bridge?"
+expected_sources = ["bridge-repair-log.txt"]
+purpose = "own"
+
+[[questions]]
+npc_id = "placeholder-three"
+question = "What is ribbonstone?"
+expected_sources = ["quarry-stone-guide.txt"]
+purpose = "own"
+
+[[questions]]
+npc_id = "placeholder-three"
+question = "Why does the quarry shut down in winter?"
+expected_sources = ["quarry-stone-guide.txt"]
+purpose = "own"
+
+[[questions]]
+npc_id = "placeholder-three"
+question = "What is the bridge mortar mixed from?"
+expected_sources = ["bridge-repair-log.txt"]
+purpose = "own"
+
+# --- Facts that exist only in another NPC's documents ---
+
+[[questions]]
+npc_id = "placeholder-two"
+question = "What is the Salt Wind?"
+expected_sources = []
+purpose = "isolation"
+
+[[questions]]
+npc_id = "placeholder-three"
+question = "Who grafted the Two-Fruit Tree?"
+expected_sources = []
+purpose = "isolation"
+
+[[questions]]
+npc_id = "placeholder-one"
+question = "How is ribbonstone cut and shaped at the quarry?"
+expected_sources = []
+purpose = "isolation"
+
+[[questions]]
+npc_id = "placeholder-one"
+question = "Which beehive is the oldest, and what colour is it?"
+expected_sources = []
+purpose = "isolation"
+
+# --- Nothing to do with any document ---
+
+[[questions]]
+npc_id = "placeholder-one"
+question = "What is the capital of France?"
+expected_sources = []
+purpose = "unrelated"
+
+[[questions]]
+npc_id = "placeholder-two"
+question = "Can you help me write a Python function that sorts a list?"
+expected_sources = []
+purpose = "unrelated"
+
+[[questions]]
+npc_id = "placeholder-three"
+question = "Hello! How are you today?"
+expected_sources = []
+purpose = "unrelated"
