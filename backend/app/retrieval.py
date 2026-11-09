@@ -1,10 +1,23 @@
 """Retrieval: find the passages in one NPC's index that best match a visitor's question."""
 
+import logging
+from pathlib import Path
+
 import numpy as np
 from pydantic import BaseModel
 
-from app.ingest import Chunk, SearchIndex, scale_rows_to_length_one
+from app.ingest import (
+    INDEXES_DIRECTORY,
+    Chunk,
+    IngestError,
+    SearchIndex,
+    load_index,
+    scale_rows_to_length_one,
+)
 from app.llm import FakeLlm, OpenAiLlm
+from app.npcs import NpcConfig
+
+logger = logging.getLogger(__name__)
 
 # How many passages the model sees at most. Enough to answer from, and each one costs tokens.
 MAX_PASSAGES = 4
@@ -78,3 +91,36 @@ def search_index(
         passages.append(RetrievedPassage(chunk=index.chunks[position], score=score))
 
     return passages
+
+
+def load_indexes(
+    npcs: list[NpcConfig],
+    embedding_model: str,
+    indexes_directory: Path = INDEXES_DIRECTORY,
+) -> dict[str, SearchIndex]:
+    """Load the index of every enabled NPC that has a usable one.
+
+    A missing or unusable index is logged and left out, so the server still starts and
+    the village still works. Only chat with that NPC fails, with a clear error.
+
+    Args:
+        npcs: The configured NPCs.
+        embedding_model: The model that will embed questions.
+        indexes_directory: The parent folder. Tests pass a temporary one.
+
+    Returns:
+        Each loaded index, keyed by knowledge base ID.
+    """
+    indexes = {}
+
+    for npc in npcs:
+        if not npc.enabled:
+            continue
+        try:
+            indexes[npc.knowledge_base_id] = load_index(
+                npc.knowledge_base_id, embedding_model, indexes_directory
+            )
+        except IngestError as error:
+            logger.warning("No search index for %s: %s", npc.id, error)
+
+    return indexes

@@ -5,6 +5,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
+from app.citations import Citation
 from app.llm import ChatMessage, LlmErrorCode
 from app.npcs import SAFE_ID_PATTERN, NpcConfig
 from app.retrieval import RetrievedPassage
@@ -22,6 +23,9 @@ LLM_ERROR_MESSAGES: dict[LlmErrorCode, str] = {
     "llm_unavailable": "The AI service couldn't be reached. Please try again.",
     "llm_bad_reply": "That reply didn't come through properly. Please try again.",
 }
+
+# Shown when an NPC's search index hasn't been built, so it has nothing to look things up in.
+KNOWLEDGE_NOT_READY_MESSAGE = "This character's records aren't ready yet."
 
 # Every NPC follows these, whatever its personality says. They come after the character
 # notes so they have the last word.
@@ -148,8 +152,9 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     """What the browser receives.
 
-    Citations and referrals are added once the server can check them. Until then, the
-    model's unchecked values must not reach the visitor.
+    Citations are checked against the passages retrieved for this message before they are
+    sent. Referrals are added once the server can check them too.
     """
 
     answer: str
+    citations: list[Citation]
