@@ -63,6 +63,7 @@ def make_npc(npc_id: str, tile_q: int, enabled: bool = True) -> NpcConfig:
         personality_instructions=f"Instructions for {npc_id}",
         expertise="Test expertise",
         knowledge_base_id=f"collection-{npc_id}",
+        no_evidence_message=f"No records for {npc_id}.",
         scene_position=ScenePosition(q=tile_q, r=0),
     )
 
