@@ -4,18 +4,24 @@ import logging
 from collections.abc import Iterator
 from typing import get_args
 
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
 from app.chat import (
+    KNOWLEDGE_NOT_READY_MESSAGE,
     LLM_ERROR_MESSAGES,
     MAX_MESSAGE_CHARACTERS,
     MAX_NPC_ID_CHARACTERS,
     SHARED_RULES,
     build_instructions,
+    build_messages,
 )
+from app.ingest import Chunk, SearchIndex
 from app.llm import (
+    FAKE_EMBEDDING_MODEL,
     ChatMessage,
+    EmbeddedTexts,
     FakeLlm,
     GeneratedReply,
     LlmErrorCode,
@@ -23,21 +29,33 @@ from app.llm import (
     ReplyKind,
     TokenUsage,
 )
-from app.main import app, get_llm, get_npcs
+from app.main import app, get_indexes, get_llm, get_npcs
 from app.npcs import NpcConfig, ScenePosition
 
 VISITOR_HEADERS = {"X-Visitor-Id": "6f1c1a52-7d3e-4b7a-9c55-0d9a7f3b2e11"}
 
+# One short document per test NPC. Each fact appears in only one NPC's index.
+DOCUMENTS = {
+    "collection-first": "The old well behind the bakery is forty feet deep.",
+    "collection-second": "The water mill grinds barley every Tuesday morning.",
+}
+
 
 class RecordingLlm:
-    """Gives a set reply and remembers what it was asked."""
+    """Gives a set reply and remembers what it was asked. Embeds text like the fake."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, list[ChatMessage]]] = []
+        self.embedding_model = FAKE_EMBEDDING_MODEL
         # A test can set this to None to act like OpenAI leaving the counts out.
         self.usage: TokenUsage | None = TokenUsage(input_tokens=100, output_tokens=20)
-        # A test can set this to "grounded" to act like the model breaking the rules.
+        # Tests change these to act like the model answering from passages, or breaking rules.
         self.kind: ReplyKind = "no_evidence"
+        self.citation_ids = ["made-up-citation"]
+
+    def embed_texts(self, texts: list[str]) -> EmbeddedTexts:
+        """Embed with the fake's word counts, so searches find shared words."""
+        return FakeLlm().embed_texts(texts)
 
     def generate_reply(self, instructions: str, messages: list[ChatMessage]) -> GeneratedReply:
         """Record the call, and answer with values the server has not checked."""
@@ -46,7 +64,7 @@ class RecordingLlm:
         reply = NpcReply(
             kind=self.kind,
             answer="A test answer",
-            citation_ids=["made-up-citation"],
+            citation_ids=self.citation_ids,
             referral_npc_id="made-up-npc",
             referral_reason="A made-up reason",
         )
@@ -63,7 +81,29 @@ def make_npc(npc_id: str, tile_q: int, enabled: bool = True) -> NpcConfig:
         personality_instructions=f"Instructions for {npc_id}",
         expertise="Test expertise",
         knowledge_base_id=f"collection-{npc_id}",
+        no_evidence_message=f"No records for {npc_id}.",
         scene_position=ScenePosition(q=tile_q, r=0),
+    )
+
+
+def make_index(knowledge_base_id: str) -> SearchIndex:
+    """Build a one-passage index from DOCUMENTS, embedded with the fake."""
+    text = DOCUMENTS[knowledge_base_id]
+    chunk = Chunk(
+        id=f"{knowledge_base_id}.txt#1",
+        source_file=f"{knowledge_base_id}.txt",
+        title=f"Notes for {knowledge_base_id}",
+        page=None,
+        section=None,
+        text=text,
+    )
+    embeddings = np.array(FakeLlm().embed_texts([text]).vectors, dtype=np.float32)
+
+    return SearchIndex(
+        knowledge_base_id=knowledge_base_id,
+        embedding_model=FAKE_EMBEDDING_MODEL,
+        chunks=[chunk],
+        embeddings=embeddings,
     )
 
 
@@ -79,6 +119,8 @@ def client(llm: RecordingLlm) -> Iterator[TestClient]:
     npcs = [make_npc("first", 0), make_npc("second", 1), make_npc("hidden", 2, enabled=False)]
     app.dependency_overrides[get_npcs] = lambda: npcs
     app.dependency_overrides[get_llm] = lambda: llm
+    indexes = {name: make_index(name) for name in DOCUMENTS}
+    app.dependency_overrides[get_indexes] = lambda: indexes
     yield TestClient(app)
     app.dependency_overrides.clear()
 
@@ -95,9 +137,9 @@ def send(client: TestClient, npc_id: str = "first", message: str = "Hello") -> d
     return response.json()
 
 
-def test_returns_only_the_answer(client: TestClient) -> None:
+def test_returns_only_the_answer_and_checked_citations(client: TestClient) -> None:
     """Unchecked citations and referrals from the model must not reach the browser."""
-    assert send(client) == {"answer": "A test answer"}
+    assert send(client) == {"answer": "A test answer", "citations": []}
 
 
 def test_uses_the_chosen_npcs_instructions(client: TestClient, llm: RecordingLlm) -> None:
@@ -260,21 +302,78 @@ def test_a_failed_reply_is_an_error_and_a_retry_can_recover(
     assert retried.status_code == 200
 
 
-def test_rejects_a_grounded_reply_while_there_are_no_documents(
-    client: TestClient, llm: RecordingLlm, caplog: pytest.LogCaptureFixture
-) -> None:
-    """A reply claiming document evidence must not reach the visitor before documents exist."""
-    llm.kind = "grounded"
+def test_searches_only_the_chosen_npcs_documents(client: TestClient, llm: RecordingLlm) -> None:
+    """The second NPC's passage must never reach the first NPC's prompt, whatever is asked."""
+    send(client, npc_id="first", message="How deep is the well? What does the mill grind?")
 
-    with caplog.at_level(logging.INFO, logger="app"):
-        response = client.post(
-            "/api/chat", json={"npc_id": "first", "message": "Hello"}, headers=VISITOR_HEADERS
-        )
+    [(_, messages)] = llm.calls
+    prompt = " ".join(message.content for message in messages)
+    assert DOCUMENTS["collection-first"] in prompt
+    assert DOCUMENTS["collection-second"] not in prompt
+
+
+def test_passes_found_passages_before_the_visitor_message(
+    client: TestClient, llm: RecordingLlm
+) -> None:
+    send(client, npc_id="second", message="When does the mill grind barley?")
+
+    [(_, messages)] = llm.calls
+    assert len(messages) == 2
+    assert "collection-second.txt#1" in messages[0].content
+    assert messages[1] == ChatMessage(role="user", content="When does the mill grind barley?")
+
+
+def test_a_message_with_no_matching_passages_sends_no_passages(
+    client: TestClient, llm: RecordingLlm
+) -> None:
+    send(client, npc_id="first", message="Hello")
+
+    [(_, messages)] = llm.calls
+    assert messages == build_messages("Hello", [])
+
+
+def test_a_grounded_reply_returns_its_checked_citation(
+    client: TestClient, llm: RecordingLlm
+) -> None:
+    llm.kind = "grounded"
+    llm.citation_ids = ["collection-first.txt#1", "made-up-citation"]
+
+    body = send(client, npc_id="first", message="How deep is the well?")
+
+    assert body["answer"] == "A test answer"
+    assert body["citations"] == [
+        {
+            "id": "collection-first.txt#1",
+            "title": "Notes for collection-first",
+            "source_file": "collection-first.txt",
+            "page": None,
+            "section": None,
+            "text": DOCUMENTS["collection-first"],
+        }
+    ]
+
+
+def test_a_grounded_reply_citing_another_npcs_passage_is_replaced(
+    client: TestClient, llm: RecordingLlm
+) -> None:
+    """A real passage ID from someone else's documents is not a valid citation here."""
+    llm.kind = "grounded"
+    llm.citation_ids = ["collection-second.txt#1"]
+
+    body = send(client, npc_id="first", message="How deep is the well?")
+
+    assert body == {"answer": "No records for first.", "citations": []}
+
+
+def test_an_npc_without_an_index_gets_a_clear_error(client: TestClient, llm: RecordingLlm) -> None:
+    app.dependency_overrides[get_indexes] = lambda: {}
+
+    response = client.post(
+        "/api/chat", json={"npc_id": "first", "message": "Hello"}, headers=VISITOR_HEADERS
+    )
 
     assert response.status_code == 503
     assert response.json() == {
-        "error": {"code": "llm_bad_reply", "message": LLM_ERROR_MESSAGES["llm_bad_reply"]}
+        "error": {"code": "knowledge_not_ready", "message": KNOWLEDGE_NOT_READY_MESSAGE}
     }
-    # The rejected reply was still paid for, so its cost is logged too.
-    assert "Chat reply: npc_id=first input_tokens=100 output_tokens=20" in caplog.messages
-    assert "Chat reply rejected: npc_id=first claimed grounded" in caplog.messages
+    assert llm.calls == []

@@ -28,7 +28,7 @@ afterEach(() => {
 
 describe('sendChatMessage', () => {
   it('sends the NPC, the message, and the visitor ID', async () => {
-    fetchMock.mockResolvedValue(jsonResponse(200, { answer: 'Hello there' }))
+    fetchMock.mockResolvedValue(jsonResponse(200, { answer: 'Hello there', citations: [] }))
 
     await sendChatMessage('test-npc', 'Hello')
 
@@ -43,9 +43,12 @@ describe('sendChatMessage', () => {
   })
 
   it('returns the reply', async () => {
-    fetchMock.mockResolvedValue(jsonResponse(200, { answer: 'Hello there' }))
+    fetchMock.mockResolvedValue(jsonResponse(200, { answer: 'Hello there', citations: [] }))
 
-    expect(await sendChatMessage('test-npc', 'Hello')).toEqual({ answer: 'Hello there' })
+    expect(await sendChatMessage('test-npc', 'Hello')).toEqual({
+      answer: 'Hello there',
+      citations: [],
+    })
   })
 
   it("passes on the server's error code and message", async () => {

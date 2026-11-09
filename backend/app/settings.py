@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr | None = None
     openai_chat_model: str = "gpt-6-luna"
     openai_reasoning_effort: str = "none"
+    # Changing this means rebuilding every search index, because old and new vectors don't mix.
+    openai_embedding_model: str = "text-embedding-3-small"
 
     # Answers chat with FakeLlm instead of OpenAI, so building the chat panel costs no credit.
     use_fake_llm: bool = False

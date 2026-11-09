@@ -1,8 +1,23 @@
 import { getVisitorId } from './visitorId'
 
-/** An NPC's reply, as sent by POST /api/chat. Citations and referrals join it later. */
+/**
+ * A source the answer relied on. The server only sends citations that match a passage
+ * it really retrieved, so each one points back to an indexed document.
+ */
+export type Citation = {
+  id: string
+  title: string
+  source_file: string
+  page: number | null
+  section: string | null
+  /** The passage's full text, so the visitor can check the answer against it. */
+  text: string
+}
+
+/** An NPC's reply, as sent by POST /api/chat. Referrals join it later. */
 export type ChatReply = {
   answer: string
+  citations: Citation[]
 }
 
 /** For failures that never reached the server's error handling, such as a stopped backend. */

@@ -35,6 +35,9 @@ class NpcConfig(BaseModel):
     personality_instructions: str = Field(min_length=1)
     expertise: str = Field(min_length=1)
     knowledge_base_id: str = Field(pattern=SAFE_ID_PATTERN)
+    # Shown in place of a reply that claims sources but cites none the server can check.
+    # Written in the NPC's own voice, so the fallback still sounds like the character.
+    no_evidence_message: str = Field(min_length=1, max_length=500)
     scene_position: ScenePosition
     # Optional until real models are chosen. The scene draws a neutral stand-in without one.
     model_asset_path: str | None = None

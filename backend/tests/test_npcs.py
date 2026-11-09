@@ -14,6 +14,7 @@ def npc_file_text(
     knowledge_base_id: str = "test-collection",
     q: int = 0,
     enabled: bool = True,
+    no_evidence_message: str = "Nothing in my records.",
     extra_line: str = "",
 ) -> str:
     """Build the text of a valid NPC file, with the given values changed."""
@@ -24,6 +25,7 @@ enabled = {str(enabled).lower()}
 personality_instructions = "Secret instructions"
 expertise = "Test expertise"
 knowledge_base_id = "{knowledge_base_id}"
+no_evidence_message = "{no_evidence_message}"
 scene_position = {{ q = {q}, r = 1 }}
 {extra_line}
 """
@@ -65,8 +67,16 @@ def test_a_new_file_adds_an_npc_with_no_code_change(tmp_path: Path) -> None:
         npc_file_text(npc_id="Not Safe/../id"),
         npc_file_text(knowledge_base_id="../other-collection"),
         npc_file_text(extra_line='misspelled_setting = "value"'),
+        npc_file_text(no_evidence_message=""),
     ],
-    ids=["bad-toml", "missing-fields", "unsafe-id", "unsafe-knowledge-base", "unknown-field"],
+    ids=[
+        "bad-toml",
+        "missing-fields",
+        "unsafe-id",
+        "unsafe-knowledge-base",
+        "unknown-field",
+        "blank-no-evidence-message",
+    ],
 )
 def test_rejects_an_invalid_file_and_names_it(tmp_path: Path, text: str) -> None:
     """A broken file should stop loading, and the error should say which file it was."""

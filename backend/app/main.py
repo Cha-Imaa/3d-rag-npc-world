@@ -10,9 +10,19 @@ from fastapi import Depends, FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from app.chat import LLM_ERROR_MESSAGES, ChatRequest, ChatResponse, build_instructions
-from app.llm import ChatMessage, FakeLlm, LlmError, OpenAiLlm, TokenUsage, create_llm
+from app.chat import (
+    KNOWLEDGE_NOT_READY_MESSAGE,
+    LLM_ERROR_MESSAGES,
+    ChatRequest,
+    ChatResponse,
+    build_instructions,
+    build_messages,
+)
+from app.citations import check_reply
+from app.ingest import SearchIndex
+from app.llm import FakeLlm, LlmError, OpenAiLlm, TokenUsage, create_llm
 from app.npcs import NpcConfig, PublicNpc, find_enabled_npc, list_public_npcs, load_npcs
+from app.retrieval import load_indexes, search_index
 from app.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -31,11 +41,20 @@ class NpcNotFoundError(Exception):
     """The visitor asked for an NPC that does not exist or is disabled."""
 
 
+class KnowledgeNotReadyError(Exception):
+    """The NPC's search index was not built or could not be loaded at startup."""
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Load NPC files once at startup, so a broken file stops the server with a clear error."""
+    """Load NPC files and search indexes once at startup.
+
+    A broken NPC file stops the server with a clear error. A missing index only stops
+    chat with that NPC, so the village still works before indexes are built.
+    """
     app.state.npcs = load_npcs()
     app.state.llm = create_llm(Settings())
+    app.state.indexes = load_indexes(app.state.npcs, app.state.llm.embedding_model)
     yield
 
 
@@ -50,6 +69,11 @@ def get_npcs(request: Request) -> list[NpcConfig]:
 def get_llm(request: Request) -> OpenAiLlm | FakeLlm:
     """Give a route the LLM chosen at startup. Tests replace this with their own."""
     return request.app.state.llm
+
+
+def get_indexes(request: Request) -> dict[str, SearchIndex]:
+    """Give a route the search indexes loaded at startup. Tests replace these with their own."""
+    return request.app.state.indexes
 
 
 def log_token_usage(npc_id: str, usage: TokenUsage | None) -> None:
@@ -103,6 +127,12 @@ def handle_npc_not_found(request: Request, error: NpcNotFoundError) -> JSONRespo
     return error_response(404, "npc_not_found", "That character isn't available.")
 
 
+@app.exception_handler(KnowledgeNotReadyError)
+def handle_knowledge_not_ready(request: Request, error: KnowledgeNotReadyError) -> JSONResponse:
+    """Answer a message to an NPC whose documents can't be searched yet."""
+    return error_response(503, "knowledge_not_ready", KNOWLEDGE_NOT_READY_MESSAGE)
+
+
 @app.exception_handler(LlmError)
 def handle_llm_error(request: Request, error: LlmError) -> JSONResponse:
     """Answer a failed reply with an error, so it can never look like an NPC's answer."""
@@ -141,6 +171,7 @@ def send_chat_message(
     visitor_id: Annotated[UUID, Header(alias="X-Visitor-Id")],
     npcs: Annotated[list[NpcConfig], Depends(get_npcs)],
     llm: Annotated[OpenAiLlm | FakeLlm, Depends(get_llm)],
+    indexes: Annotated[dict[str, SearchIndex], Depends(get_indexes)],
 ) -> ChatResponse:
     """Send the visitor's message to an NPC and return its reply.
 
@@ -148,30 +179,34 @@ def send_chat_message(
         chat_request: The NPC's ID and the visitor's message.
         visitor_id: The anonymous ID the browser created.
         npcs: The configured NPCs.
-        llm: What produces the reply.
+        llm: What produces the reply and embeds the search text.
+        indexes: The search index of each NPC, keyed by knowledge base ID.
 
     Returns:
-        The NPC's answer.
+        The NPC's answer, with citations the server has checked.
 
     Raises:
         NpcNotFoundError: If the NPC does not exist or is disabled.
-        LlmError: If no usable reply was produced, including a "grounded" reply while
-            there are no documents.
+        KnowledgeNotReadyError: If the NPC's search index is not loaded.
+        LlmError: If the search text could not be embedded, or no usable reply was produced.
     """
     npc = find_enabled_npc(npcs, chat_request.npc_id)
     if npc is None:
         raise NpcNotFoundError
 
+    # The knowledge base comes from configuration, never from the browser, so a visitor
+    # can only ever search the documents of the NPC they are talking to.
+    index = indexes.get(npc.knowledge_base_id)
+    if index is None:
+        raise KnowledgeNotReadyError
+
+    passages = search_index(index, chat_request.message, llm)
+
     # Only the new message for now. Earlier messages are added once they are saved.
-    messages = [ChatMessage(role="user", content=chat_request.message)]
+    messages = build_messages(chat_request.message, passages)
     generated = llm.generate_reply(build_instructions(npc), messages)
-    # Logged before any check below, because a rejected reply is still paid for.
     log_token_usage(npc.id, generated.usage)
 
-    # There are no documents yet, so a "grounded" reply claims evidence it cannot have.
-    # It fails like any unusable reply, which lets the visitor try again.
-    if generated.reply.kind == "grounded":
-        logger.warning("Chat reply rejected: npc_id=%s claimed grounded", npc.id)
-        raise LlmError("llm_bad_reply")
+    checked = check_reply(npc, generated.reply, passages)
 
-    return ChatResponse(answer=generated.reply.answer)
+    return ChatResponse(answer=checked.answer, citations=checked.citations)
