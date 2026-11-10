@@ -23,9 +23,9 @@ CITATION = Citation(
 
 
 @pytest.fixture
-def store(tmp_path: Path) -> ConversationStore:
-    """Give each test its own empty database file."""
-    return ConversationStore(tmp_path / "conversations.db")
+def store(conversation_store: ConversationStore) -> ConversationStore:
+    """Use the empty database file each test gets from conftest.py."""
+    return conversation_store
 
 
 def visitor_message(content: str) -> SavedMessage:

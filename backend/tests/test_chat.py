@@ -377,3 +377,96 @@ def test_an_npc_without_an_index_gets_a_clear_error(client: TestClient, llm: Rec
         "error": {"code": "knowledge_not_ready", "message": KNOWLEDGE_NOT_READY_MESSAGE}
     }
     assert llm.calls == []
+
+
+# Saved conversations
+
+OTHER_VISITOR_HEADERS = {"X-Visitor-Id": "0b8e2f4c-3a1d-4e6f-8b2a-9c7d5e1f3a20"}
+
+
+def load_conversation(client: TestClient, npc_id: str, headers: dict = VISITOR_HEADERS) -> list:
+    """Load a saved conversation and return its messages, checking that it worked."""
+    response = client.get(f"/api/conversations/{npc_id}", headers=headers)
+    assert response.status_code == 200
+
+    return response.json()["messages"]
+
+
+def test_a_reply_is_saved_with_the_visitors_message(client: TestClient) -> None:
+    send(client, npc_id="first", message="Hello there")
+
+    assert load_conversation(client, "first") == [
+        {"role": "visitor", "content": "Hello there", "citations": []},
+        {"role": "npc", "content": "A test answer", "citations": []},
+    ]
+
+
+def test_a_restored_reply_shows_the_same_citations(client: TestClient, llm: RecordingLlm) -> None:
+    """Reopening a conversation must show exactly the sources the visitor saw."""
+    llm.kind = "grounded"
+    llm.citation_ids = ["collection-first.txt#1"]
+
+    body = send(client, npc_id="first", message="How deep is the old well?")
+    [_, saved_reply] = load_conversation(client, "first")
+
+    assert saved_reply["content"] == body["answer"]
+    assert saved_reply["citations"] == body["citations"]
+    assert len(body["citations"]) == 1
+
+
+def test_a_replaced_reply_is_saved_as_shown(client: TestClient, llm: RecordingLlm) -> None:
+    """The saved reply is the checked one, not what the model first claimed."""
+    llm.kind = "grounded"
+    llm.citation_ids = ["made-up-citation"]
+
+    send(client, npc_id="first", message="How deep is the old well?")
+    [_, saved_reply] = load_conversation(client, "first")
+
+    assert saved_reply == {"role": "npc", "content": "No records for first.", "citations": []}
+
+
+def test_a_failed_reply_saves_nothing(client: TestClient) -> None:
+    """A retry would otherwise save the visitor's message twice."""
+    app.dependency_overrides[get_llm] = lambda: FakeLlm()
+
+    response = client.post(
+        "/api/chat",
+        json={"npc_id": "first", "message": "llm_unavailable"},
+        headers=VISITOR_HEADERS,
+    )
+
+    assert response.status_code == 503
+    assert load_conversation(client, "first") == []
+
+
+def test_conversations_are_kept_per_npc_and_per_visitor(client: TestClient) -> None:
+    send(client, npc_id="first", message="To first")
+
+    assert load_conversation(client, "second") == []
+    assert load_conversation(client, "first", headers=OTHER_VISITOR_HEADERS) == []
+
+
+@pytest.mark.parametrize("npc_id", ["hidden", "not-configured"])
+def test_loading_an_npc_the_visitor_cant_talk_to_fails(client: TestClient, npc_id: str) -> None:
+    response = client.get(f"/api/conversations/{npc_id}", headers=VISITOR_HEADERS)
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "npc_not_found"
+
+
+@pytest.mark.parametrize("npc_id", ["Not-Safe", "a" * (MAX_NPC_ID_CHARACTERS + 1)])
+def test_loading_rejects_a_bad_npc_id(client: TestClient, npc_id: str) -> None:
+    response = client.get(f"/api/conversations/{npc_id}", headers=VISITOR_HEADERS)
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_request"
+
+
+@pytest.mark.parametrize("headers", [{}, {"X-Visitor-Id": "not-a-uuid"}])
+def test_loading_needs_a_valid_visitor_id(client: TestClient, headers: dict) -> None:
+    send(client, npc_id="first")
+
+    response = client.get("/api/conversations/first", headers=headers)
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_request"
