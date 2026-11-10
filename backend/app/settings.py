@@ -2,11 +2,13 @@
 
 from pathlib import Path
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+
 # An absolute path, so the file is found whichever folder the server starts from.
-ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+ENV_FILE = REPOSITORY_ROOT / ".env"
 
 
 class Settings(BaseSettings):
@@ -30,3 +32,11 @@ class Settings(BaseSettings):
 
     # Answers chat with FakeLlm instead of OpenAI, so building the chat panel costs no credit.
     use_fake_llm: bool = False
+
+    # The SQLite file that holds saved conversations. Git ignores .db files.
+    database_path: Path = REPOSITORY_ROOT / "data" / "conversations.db"
+
+    # How many recent saved messages go to the model with each new one, so an NPC can
+    # follow the conversation. Every message sent is paid for, so this stays small.
+    # 10 is five exchanges. 0 sends none.
+    conversation_context_messages: int = Field(default=10, ge=0)

@@ -20,6 +20,14 @@ export type ChatReply = {
   citations: Citation[]
 }
 
+/** One saved message, as sent by GET /api/conversations/{npc_id}, oldest first. */
+export type SavedMessage = {
+  role: 'visitor' | 'npc'
+  content: string
+  /** The sources an NPC's reply showed. Always empty for the visitor's messages. */
+  citations: Citation[]
+}
+
 /** For failures that never reached the server's error handling, such as a stopped backend. */
 const UNREACHABLE_CODE = 'server_unreachable'
 const UNREACHABLE_MESSAGE = "The village server couldn't be reached. Please try again."
@@ -52,21 +60,20 @@ async function readChatError(response: Response): Promise<ChatError> {
 }
 
 /**
- * Send the visitor's message to an NPC.
+ * Make a request to the server as this visitor, and check that it worked.
  *
- * @param npcId the NPC being talked to.
- * @param message the visitor's message.
- * @returns the NPC's reply.
- * @throws ChatError if no reply came back, so a failure can never look like an answer.
+ * @param path the API path, such as /api/chat.
+ * @param options the method, body, and any extra headers.
+ * @returns the successful response.
+ * @throws ChatError if the server can't be reached or the request failed.
  */
-export async function sendChatMessage(npcId: string, message: string): Promise<ChatReply> {
+async function requestAsVisitor(path: string, options: RequestInit = {}): Promise<Response> {
   let response: Response
 
   try {
-    response = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Visitor-Id': getVisitorId() },
-      body: JSON.stringify({ npc_id: npcId, message }),
+    response = await fetch(path, {
+      ...options,
+      headers: { ...options.headers, 'X-Visitor-Id': getVisitorId() },
     })
   } catch {
     throw new ChatError(UNREACHABLE_CODE, UNREACHABLE_MESSAGE)
@@ -76,5 +83,47 @@ export async function sendChatMessage(npcId: string, message: string): Promise<C
     throw await readChatError(response)
   }
 
+  return response
+}
+
+/**
+ * Send the visitor's message to an NPC.
+ *
+ * @param npcId the NPC being talked to.
+ * @param message the visitor's message.
+ * @returns the NPC's reply.
+ * @throws ChatError if no reply came back, so a failure can never look like an answer.
+ */
+export async function sendChatMessage(npcId: string, message: string): Promise<ChatReply> {
+  const response = await requestAsVisitor('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ npc_id: npcId, message }),
+  })
+
   return response.json()
+}
+
+/**
+ * Load this visitor's saved conversation with one NPC.
+ *
+ * @param npcId the NPC whose conversation to load.
+ * @returns the saved messages, oldest first. Empty if nothing was said yet.
+ * @throws ChatError if the conversation could not be loaded.
+ */
+export async function loadConversation(npcId: string): Promise<SavedMessage[]> {
+  // Encoded so an ID can never change which path is asked for.
+  const response = await requestAsVisitor(`/api/conversations/${encodeURIComponent(npcId)}`)
+  const { messages } = await response.json()
+
+  return messages
+}
+
+/**
+ * Delete this visitor's saved conversations with every NPC.
+ *
+ * @throws ChatError if the conversations could not be deleted, so a failure never looks done.
+ */
+export async function clearConversations(): Promise<void> {
+  await requestAsVisitor('/api/conversations', { method: 'DELETE' })
 }

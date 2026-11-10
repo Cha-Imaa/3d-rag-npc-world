@@ -6,24 +6,35 @@ from contextlib import asynccontextmanager
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Header, Request
+from fastapi import Depends, FastAPI, Header, Path, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from app.chat import (
     KNOWLEDGE_NOT_READY_MESSAGE,
     LLM_ERROR_MESSAGES,
+    MAX_NPC_ID_CHARACTERS,
     ChatRequest,
     ChatResponse,
     build_instructions,
     build_messages,
+    build_search_text,
 )
 from app.citations import check_reply
 from app.ingest import SearchIndex
 from app.llm import FakeLlm, LlmError, OpenAiLlm, TokenUsage, create_llm
-from app.npcs import NpcConfig, PublicNpc, find_enabled_npc, list_public_npcs, load_npcs
+from app.npcs import (
+    SAFE_ID_PATTERN,
+    NpcConfig,
+    PublicNpc,
+    find_enabled_npc,
+    list_public_npcs,
+    load_npcs,
+)
 from app.retrieval import load_indexes, search_index
 from app.settings import Settings
+from app.storage import ConversationStore, SavedMessage
 
 logger = logging.getLogger(__name__)
 
@@ -45,16 +56,29 @@ class KnowledgeNotReadyError(Exception):
     """The NPC's search index was not built or could not be loaded at startup."""
 
 
+class ConversationResponse(BaseModel):
+    """One saved conversation, oldest message first, as GET /api/conversations returns it."""
+
+    messages: list[SavedMessage]
+
+
+# The same rules as npc_id in a chat request, used where the ID is part of the path.
+NpcIdPath = Annotated[str, Path(pattern=SAFE_ID_PATTERN, max_length=MAX_NPC_ID_CHARACTERS)]
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Load NPC files and search indexes once at startup.
+    """Load NPC files and search indexes, and open conversation storage, once at startup.
 
     A broken NPC file stops the server with a clear error. A missing index only stops
     chat with that NPC, so the village still works before indexes are built.
     """
+    settings = Settings()
+    app.state.settings = settings
     app.state.npcs = load_npcs()
-    app.state.llm = create_llm(Settings())
+    app.state.llm = create_llm(settings)
     app.state.indexes = load_indexes(app.state.npcs, app.state.llm.embedding_model)
+    app.state.store = ConversationStore(settings.database_path)
     yield
 
 
@@ -74,6 +98,16 @@ def get_llm(request: Request) -> OpenAiLlm | FakeLlm:
 def get_indexes(request: Request) -> dict[str, SearchIndex]:
     """Give a route the search indexes loaded at startup. Tests replace these with their own."""
     return request.app.state.indexes
+
+
+def get_store(request: Request) -> ConversationStore:
+    """Give a route the conversation storage opened at startup. Tests use their own file."""
+    return request.app.state.store
+
+
+def get_settings(request: Request) -> Settings:
+    """Give a route the settings read at startup. Tests replace them with their own."""
+    return request.app.state.settings
 
 
 def log_token_usage(npc_id: str, usage: TokenUsage | None) -> None:
@@ -167,13 +201,15 @@ def read_npcs(npcs: Annotated[list[NpcConfig], Depends(get_npcs)]) -> list[Publi
 @app.post("/api/chat")
 def send_chat_message(
     chat_request: ChatRequest,
-    # Required and checked now, so the browser is ready for when conversations are saved.
+    # FastAPI rejects a value that is not a UUID, so a visitor can't pick an odd ID.
     visitor_id: Annotated[UUID, Header(alias="X-Visitor-Id")],
     npcs: Annotated[list[NpcConfig], Depends(get_npcs)],
     llm: Annotated[OpenAiLlm | FakeLlm, Depends(get_llm)],
     indexes: Annotated[dict[str, SearchIndex], Depends(get_indexes)],
+    store: Annotated[ConversationStore, Depends(get_store)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> ChatResponse:
-    """Send the visitor's message to an NPC and return its reply.
+    """Send the visitor's message to an NPC, save the exchange, and return the reply.
 
     Args:
         chat_request: The NPC's ID and the visitor's message.
@@ -181,6 +217,8 @@ def send_chat_message(
         npcs: The configured NPCs.
         llm: What produces the reply and embeds the search text.
         indexes: The search index of each NPC, keyed by knowledge base ID.
+        store: Where earlier messages are read from and the exchange is saved.
+        settings: For how many earlier messages to send.
 
     Returns:
         The NPC's answer, with citations the server has checked.
@@ -200,13 +238,67 @@ def send_chat_message(
     if index is None:
         raise KnowledgeNotReadyError
 
-    passages = search_index(index, chat_request.message, llm)
+    # Only this visitor's recent messages with this NPC, so the NPC can follow the
+    # conversation without seeing anyone else's, and the cost per message stays small.
+    earlier_messages = store.load_messages(
+        visitor_id, npc.id, limit=settings.conversation_context_messages
+    )
 
-    # Only the new message for now. Earlier messages are added once they are saved.
-    messages = build_messages(chat_request.message, passages)
+    # The previous message helps a short follow-up find the passages it is about.
+    search_text = build_search_text(chat_request.message, earlier_messages)
+    passages = search_index(index, search_text, llm)
+
+    messages = build_messages(chat_request.message, passages, earlier_messages)
     generated = llm.generate_reply(build_instructions(npc), messages)
     log_token_usage(npc.id, generated.usage)
 
     checked = check_reply(npc, generated.reply, passages)
 
+    # Saved only once the reply is checked, so what is restored later is exactly what
+    # the visitor saw, and a failed reply saves nothing.
+    store.save_exchange(visitor_id, npc.id, chat_request.message, checked.answer, checked.citations)
+
     return ChatResponse(answer=checked.answer, citations=checked.citations)
+
+
+@app.get("/api/conversations/{npc_id}")
+def read_conversation(
+    npc_id: NpcIdPath,
+    visitor_id: Annotated[UUID, Header(alias="X-Visitor-Id")],
+    npcs: Annotated[list[NpcConfig], Depends(get_npcs)],
+    store: Annotated[ConversationStore, Depends(get_store)],
+) -> ConversationResponse:
+    """Load the visitor's saved conversation with one NPC.
+
+    Args:
+        npc_id: The NPC whose conversation to load.
+        visitor_id: The anonymous ID the browser created. Only this visitor's messages load.
+        npcs: The configured NPCs.
+        store: Where conversations are saved.
+
+    Returns:
+        The messages, oldest first, with the citations each reply showed.
+
+    Raises:
+        NpcNotFoundError: If the NPC does not exist or is disabled.
+    """
+    if find_enabled_npc(npcs, npc_id) is None:
+        raise NpcNotFoundError
+
+    return ConversationResponse(messages=store.load_messages(visitor_id, npc_id))
+
+
+@app.delete("/api/conversations", status_code=204)
+def delete_conversations(
+    visitor_id: Annotated[UUID, Header(alias="X-Visitor-Id")],
+    store: Annotated[ConversationStore, Depends(get_store)],
+) -> None:
+    """Clear every saved conversation of this visitor, with every NPC.
+
+    It succeeds even when there is nothing to clear, so pressing clear twice is harmless.
+
+    Args:
+        visitor_id: The anonymous ID the browser created. Only this visitor's history goes.
+        store: Where conversations are saved.
+    """
+    store.delete_conversations(visitor_id)
