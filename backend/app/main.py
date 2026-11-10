@@ -282,3 +282,19 @@ def read_conversation(
         raise NpcNotFoundError
 
     return ConversationResponse(messages=store.load_messages(visitor_id, npc_id))
+
+
+@app.delete("/api/conversations", status_code=204)
+def delete_conversations(
+    visitor_id: Annotated[UUID, Header(alias="X-Visitor-Id")],
+    store: Annotated[ConversationStore, Depends(get_store)],
+) -> None:
+    """Clear every saved conversation of this visitor, with every NPC.
+
+    It succeeds even when there is nothing to clear, so pressing clear twice is harmless.
+
+    Args:
+        visitor_id: The anonymous ID the browser created. Only this visitor's history goes.
+        store: Where conversations are saved.
+    """
+    store.delete_conversations(visitor_id)

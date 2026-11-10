@@ -536,3 +536,55 @@ def test_the_model_never_gets_another_npcs_or_visitors_messages(
     send(client, npc_id="first", message="Hello")
 
     assert sent_messages(llm) == [ChatMessage(role="user", content="Hello")]
+
+
+# Clearing conversations
+
+
+def test_clearing_removes_every_conversation_of_the_visitor(
+    client: TestClient, llm: RecordingLlm
+) -> None:
+    send(client, npc_id="first", message="To first")
+    send(client, npc_id="second", message="To second")
+
+    response = client.delete("/api/conversations", headers=VISITOR_HEADERS)
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert load_conversation(client, "first") == []
+    assert load_conversation(client, "second") == []
+
+    # The next message starts afresh, so the model gets no cleared messages either.
+    send(client, npc_id="first", message="Hello")
+    assert sent_messages(llm) == [ChatMessage(role="user", content="Hello")]
+
+
+def test_clearing_leaves_other_visitors_alone(client: TestClient) -> None:
+    send(client, npc_id="first", message="Mine")
+    response = client.post(
+        "/api/chat",
+        json={"npc_id": "first", "message": "Theirs"},
+        headers=OTHER_VISITOR_HEADERS,
+    )
+    assert response.status_code == 200
+
+    client.delete("/api/conversations", headers=VISITOR_HEADERS)
+
+    assert len(load_conversation(client, "first", headers=OTHER_VISITOR_HEADERS)) == 2
+
+
+def test_clearing_with_nothing_saved_still_succeeds(client: TestClient) -> None:
+    response = client.delete("/api/conversations", headers=VISITOR_HEADERS)
+
+    assert response.status_code == 204
+
+
+@pytest.mark.parametrize("headers", [{}, {"X-Visitor-Id": "not-a-uuid"}])
+def test_clearing_needs_a_valid_visitor_id(client: TestClient, headers: dict) -> None:
+    send(client, npc_id="first")
+
+    response = client.delete("/api/conversations", headers=headers)
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_request"
+    assert len(load_conversation(client, "first")) == 2
