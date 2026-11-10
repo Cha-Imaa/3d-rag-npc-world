@@ -29,8 +29,9 @@ from app.llm import (
     ReplyKind,
     TokenUsage,
 )
-from app.main import app, get_indexes, get_llm, get_npcs
+from app.main import app, get_indexes, get_llm, get_npcs, get_settings
 from app.npcs import NpcConfig, ScenePosition
+from app.settings import Settings
 
 VISITOR_HEADERS = {"X-Visitor-Id": "6f1c1a52-7d3e-4b7a-9c55-0d9a7f3b2e11"}
 
@@ -470,3 +471,68 @@ def test_loading_needs_a_valid_visitor_id(client: TestClient, headers: dict) -> 
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "invalid_request"
+
+
+# Earlier messages as context
+
+
+def sent_messages(llm: RecordingLlm) -> list[ChatMessage]:
+    """The messages the model got on its most recent call."""
+    return llm.calls[-1][1]
+
+
+def test_the_model_gets_the_earlier_exchange(client: TestClient, llm: RecordingLlm) -> None:
+    send(client, npc_id="first", message="Hello")
+    send(client, npc_id="first", message="Hello again")
+
+    assert sent_messages(llm) == [
+        ChatMessage(role="user", content="Hello"),
+        ChatMessage(role="assistant", content="A test answer"),
+        ChatMessage(role="user", content="Hello again"),
+    ]
+
+
+def test_the_setting_limits_how_many_earlier_messages_are_sent(
+    client: TestClient, llm: RecordingLlm
+) -> None:
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        _env_file=None, conversation_context_messages=2
+    )
+
+    send(client, npc_id="first", message="One")
+    send(client, npc_id="first", message="Two")
+    send(client, npc_id="first", message="Three")
+
+    assert sent_messages(llm) == [
+        ChatMessage(role="user", content="Two"),
+        ChatMessage(role="assistant", content="A test answer"),
+        ChatMessage(role="user", content="Three"),
+    ]
+
+
+def test_a_limit_of_zero_sends_no_earlier_messages(client: TestClient, llm: RecordingLlm) -> None:
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        _env_file=None, conversation_context_messages=0
+    )
+
+    send(client, npc_id="first", message="One")
+    send(client, npc_id="first", message="Two")
+
+    assert sent_messages(llm) == [ChatMessage(role="user", content="Two")]
+
+
+def test_the_model_never_gets_another_npcs_or_visitors_messages(
+    client: TestClient, llm: RecordingLlm
+) -> None:
+    """Memory separation: history is scoped by visitor and NPC."""
+    send(client, npc_id="second", message="Told to second")
+    response = client.post(
+        "/api/chat",
+        json={"npc_id": "first", "message": "From someone else"},
+        headers=OTHER_VISITOR_HEADERS,
+    )
+    assert response.status_code == 200
+
+    send(client, npc_id="first", message="Hello")
+
+    assert sent_messages(llm) == [ChatMessage(role="user", content="Hello")]

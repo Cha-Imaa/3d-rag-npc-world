@@ -10,6 +10,7 @@ from app.chat import (
 from app.ingest import Chunk
 from app.llm import ChatMessage
 from app.retrieval import RetrievedPassage
+from app.storage import SavedMessage
 
 
 def make_passage(
@@ -87,3 +88,47 @@ def test_rules_make_partial_answers_grounded_and_keep_facts_out_of_no_evidence()
     # grounded and a no_evidence reply mentions no facts from the passages.
     assert "even if they\n  answer only part of the question" in SHARED_RULES
     assert "Don't mention any fact from the passages" in SHARED_RULES
+
+
+def test_earlier_messages_come_first_then_passages_then_the_new_message() -> None:
+    """Passages sit right before the question they were found for."""
+    earlier = [
+        SavedMessage(role="visitor", content="Is there a well?", citations=[]),
+        SavedMessage(role="npc", content="Yes, behind the bakery.", citations=[]),
+    ]
+
+    messages = build_messages("How deep is it?", [make_passage()], earlier)
+
+    assert messages == [
+        ChatMessage(role="user", content="Is there a well?"),
+        ChatMessage(role="assistant", content="Yes, behind the bakery."),
+        ChatMessage(role="user", content=format_passages([make_passage()])),
+        ChatMessage(role="user", content="How deep is it?"),
+    ]
+
+
+def test_earlier_citations_are_not_sent_again() -> None:
+    """Only the newest passages may be cited, so old sources stay out of the prompt."""
+    passage = make_passage()
+    citation = {
+        "id": passage.chunk.id,
+        "title": passage.chunk.title,
+        "source_file": passage.chunk.source_file,
+        "page": None,
+        "section": None,
+        "text": passage.chunk.text,
+    }
+    earlier = [
+        SavedMessage.model_validate(
+            {"role": "npc", "content": "Forty feet.", "citations": [citation]}
+        )
+    ]
+
+    messages = build_messages("Thanks", [], earlier)
+
+    assert messages[0] == ChatMessage(role="assistant", content="Forty feet.")
+    assert passage.chunk.text not in "".join(message.content for message in messages)
+
+
+def test_rules_say_earlier_messages_are_not_passages() -> None:
+    assert "cite only passages sent with the visitor's newest message" in SHARED_RULES

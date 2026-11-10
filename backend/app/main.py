@@ -73,6 +73,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     chat with that NPC, so the village still works before indexes are built.
     """
     settings = Settings()
+    app.state.settings = settings
     app.state.npcs = load_npcs()
     app.state.llm = create_llm(settings)
     app.state.indexes = load_indexes(app.state.npcs, app.state.llm.embedding_model)
@@ -101,6 +102,11 @@ def get_indexes(request: Request) -> dict[str, SearchIndex]:
 def get_store(request: Request) -> ConversationStore:
     """Give a route the conversation storage opened at startup. Tests use their own file."""
     return request.app.state.store
+
+
+def get_settings(request: Request) -> Settings:
+    """Give a route the settings read at startup. Tests replace them with their own."""
+    return request.app.state.settings
 
 
 def log_token_usage(npc_id: str, usage: TokenUsage | None) -> None:
@@ -200,6 +206,7 @@ def send_chat_message(
     llm: Annotated[OpenAiLlm | FakeLlm, Depends(get_llm)],
     indexes: Annotated[dict[str, SearchIndex], Depends(get_indexes)],
     store: Annotated[ConversationStore, Depends(get_store)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> ChatResponse:
     """Send the visitor's message to an NPC, save the exchange, and return the reply.
 
@@ -209,7 +216,8 @@ def send_chat_message(
         npcs: The configured NPCs.
         llm: What produces the reply and embeds the search text.
         indexes: The search index of each NPC, keyed by knowledge base ID.
-        store: Where the exchange is saved.
+        store: Where earlier messages are read from and the exchange is saved.
+        settings: For how many earlier messages to send.
 
     Returns:
         The NPC's answer, with citations the server has checked.
@@ -231,8 +239,12 @@ def send_chat_message(
 
     passages = search_index(index, chat_request.message, llm)
 
-    # Only the new message for now. Earlier messages are added once they are saved.
-    messages = build_messages(chat_request.message, passages)
+    # Only this visitor's recent messages with this NPC, so the NPC can follow the
+    # conversation without seeing anyone else's, and the cost per message stays small.
+    earlier_messages = store.load_messages(
+        visitor_id, npc.id, limit=settings.conversation_context_messages
+    )
+    messages = build_messages(chat_request.message, passages, earlier_messages)
     generated = llm.generate_reply(build_instructions(npc), messages)
     log_token_usage(npc.id, generated.usage)
 

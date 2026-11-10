@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -35,3 +35,8 @@ class Settings(BaseSettings):
 
     # The SQLite file that holds saved conversations. Git ignores .db files.
     database_path: Path = REPOSITORY_ROOT / "data" / "conversations.db"
+
+    # How many recent saved messages go to the model with each new one, so an NPC can
+    # follow the conversation. Every message sent is paid for, so this stays small.
+    # 10 is five exchanges. 0 sends none.
+    conversation_context_messages: int = Field(default=10, ge=0)
