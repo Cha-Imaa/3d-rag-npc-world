@@ -158,6 +158,29 @@ def build_messages(
     return messages
 
 
+def build_search_text(visitor_message: str, earlier_messages: list[SavedMessage]) -> str:
+    """Put together the text to search the NPC's documents with.
+
+    A short follow-up such as "and the second one?" says too little to find anything on
+    its own, so the visitor's previous message goes in front of it. Only the visitor's
+    words are used, not the NPC's reply, so a reply can't steer the search.
+
+    Args:
+        visitor_message: What the visitor just wrote.
+        earlier_messages: Recent saved messages from this conversation, oldest first.
+
+    Returns:
+        The previous visitor message and the new one on separate lines, or only the new
+        message if there is no previous one.
+    """
+    # Walk back from the newest message to the visitor's most recent one.
+    for saved in reversed(earlier_messages):
+        if saved.role == "visitor":
+            return f"{saved.content}\n{visitor_message}"
+
+    return visitor_message
+
+
 class ChatRequest(BaseModel):
     """What the browser may send. The NPC's knowledge base always comes from configuration."""
 

@@ -19,6 +19,7 @@ from app.chat import (
     ChatResponse,
     build_instructions,
     build_messages,
+    build_search_text,
 )
 from app.citations import check_reply
 from app.ingest import SearchIndex
@@ -237,13 +238,16 @@ def send_chat_message(
     if index is None:
         raise KnowledgeNotReadyError
 
-    passages = search_index(index, chat_request.message, llm)
-
     # Only this visitor's recent messages with this NPC, so the NPC can follow the
     # conversation without seeing anyone else's, and the cost per message stays small.
     earlier_messages = store.load_messages(
         visitor_id, npc.id, limit=settings.conversation_context_messages
     )
+
+    # The previous message helps a short follow-up find the passages it is about.
+    search_text = build_search_text(chat_request.message, earlier_messages)
+    passages = search_index(index, search_text, llm)
+
     messages = build_messages(chat_request.message, passages, earlier_messages)
     generated = llm.generate_reply(build_instructions(npc), messages)
     log_token_usage(npc.id, generated.usage)

@@ -53,9 +53,12 @@ class RecordingLlm:
         # Tests change these to act like the model answering from passages, or breaking rules.
         self.kind: ReplyKind = "no_evidence"
         self.citation_ids = ["made-up-citation"]
+        # Every text embedded, so a test can see what each search looked for.
+        self.embedded_texts: list[str] = []
 
     def embed_texts(self, texts: list[str]) -> EmbeddedTexts:
-        """Embed with the fake's word counts, so searches find shared words."""
+        """Record the texts, and embed them with the fake's word counts."""
+        self.embedded_texts.extend(texts)
         return FakeLlm().embed_texts(texts)
 
     def generate_reply(self, instructions: str, messages: list[ChatMessage]) -> GeneratedReply:
@@ -536,6 +539,42 @@ def test_the_model_never_gets_another_npcs_or_visitors_messages(
     send(client, npc_id="first", message="Hello")
 
     assert sent_messages(llm) == [ChatMessage(role="user", content="Hello")]
+
+
+def test_a_follow_up_searches_with_the_previous_message(
+    client: TestClient, llm: RecordingLlm
+) -> None:
+    """A vague follow-up still finds the passage the conversation is about."""
+    send(client, npc_id="first", message="How deep is the well behind the bakery?")
+    send(client, npc_id="first", message="Really?")
+
+    assert llm.embedded_texts[-1] == "How deep is the well behind the bakery?\nReally?"
+    assert DOCUMENTS["collection-first"] in sent_messages(llm)[-2].content
+
+
+def test_a_vague_first_message_finds_nothing(client: TestClient, llm: RecordingLlm) -> None:
+    """The control for the test above: without the earlier message, nothing matches."""
+    send(client, npc_id="first", message="Really?")
+
+    assert llm.embedded_texts == ["Really?"]
+    assert sent_messages(llm) == [ChatMessage(role="user", content="Really?")]
+
+
+def test_the_search_never_uses_another_npcs_or_visitors_messages(
+    client: TestClient, llm: RecordingLlm
+) -> None:
+    """Memory separation: the search text is scoped by visitor and NPC, like the context."""
+    send(client, npc_id="second", message="Told to second")
+    response = client.post(
+        "/api/chat",
+        json={"npc_id": "first", "message": "From someone else"},
+        headers=OTHER_VISITOR_HEADERS,
+    )
+    assert response.status_code == 200
+
+    send(client, npc_id="first", message="Hello")
+
+    assert llm.embedded_texts[-1] == "Hello"
 
 
 # Clearing conversations

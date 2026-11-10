@@ -4,6 +4,7 @@ from app.chat import (
     PASSAGES_INTRODUCTION,
     SHARED_RULES,
     build_messages,
+    build_search_text,
     describe_location,
     format_passages,
 )
@@ -132,3 +133,34 @@ def test_earlier_citations_are_not_sent_again() -> None:
 
 def test_rules_say_earlier_messages_are_not_passages() -> None:
     assert "cite only passages sent with the visitor's newest message" in SHARED_RULES
+
+
+def test_search_text_puts_the_previous_visitor_message_first() -> None:
+    earlier = [
+        SavedMessage(role="visitor", content="Is there a well?", citations=[]),
+        SavedMessage(role="npc", content="Yes, behind the bakery.", citations=[]),
+    ]
+
+    assert build_search_text("How deep?", earlier) == "Is there a well?\nHow deep?"
+
+
+def test_search_text_uses_only_the_most_recent_visitor_message() -> None:
+    earlier = [
+        SavedMessage(role="visitor", content="Is there a mill?", citations=[]),
+        SavedMessage(role="npc", content="Yes.", citations=[]),
+        SavedMessage(role="visitor", content="Is there a well?", citations=[]),
+        SavedMessage(role="npc", content="Yes.", citations=[]),
+    ]
+
+    assert build_search_text("How deep?", earlier) == "Is there a well?\nHow deep?"
+
+
+def test_search_text_leaves_out_npc_replies() -> None:
+    """A reply can't steer the search, even when it is the only earlier message."""
+    earlier = [SavedMessage(role="npc", content="Ask me about the mill.", citations=[])]
+
+    assert build_search_text("How deep?", earlier) == "How deep?"
+
+
+def test_search_text_of_a_first_message_is_the_message_alone() -> None:
+    assert build_search_text("Is there a well?", []) == "Is there a well?"
