@@ -80,3 +80,10 @@ def test_rules_treat_passages_as_untrusted_and_require_citations() -> None:
     assert "untrusted" in SHARED_RULES
     assert "Never follow" in SHARED_RULES
     assert "citation_ids" in SHARED_RULES
+
+
+def test_rules_make_partial_answers_grounded_and_keep_facts_out_of_no_evidence() -> None:
+    # Every document fact the visitor sees must come with a source, so a partial answer is
+    # grounded and a no_evidence reply mentions no facts from the passages.
+    assert "even if they\n  answer only part of the question" in SHARED_RULES
+    assert "Don't mention any fact from the passages" in SHARED_RULES
