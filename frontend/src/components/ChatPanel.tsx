@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import {
   ChatError,
+  clearConversations,
   loadConversation,
   sendChatMessage,
   type Citation,
@@ -8,6 +9,7 @@ import {
 } from '../api/chat'
 import type { Npc } from '../api/npcs'
 import { CitationList } from './CitationList'
+import { ClearConversationsControl } from './ClearConversationsControl'
 
 /** The server refuses longer messages, so the panel stops them before sending. */
 const MAX_MESSAGE_CHARACTERS = 2000
@@ -60,14 +62,19 @@ export function ChatPanel({ npc, onClose }: { npc: Npc; onClose: () => void }) {
   const [failedSend, setFailedSend] = useState<FailedSend | null>(null)
   const [isLoadingHistory, setIsLoadingHistory] = useState(true)
   const [historyFailed, setHistoryFailed] = useState(false)
+  const [isClearing, setIsClearing] = useState(false)
 
   const messageListRef = useRef<HTMLDivElement>(null)
   const messageBoxRef = useRef<HTMLTextAreaElement>(null)
 
   const message = draft.trim()
   const isTooLong = countCharacters(message) > MAX_MESSAGE_CHARACTERS
-  // Sending waits for the saved messages, so the restored list can't replace a new message.
-  const canSend = message !== '' && !isTooLong && !isWaitingForReply && !isLoadingHistory
+  // Sending waits for the saved messages, so the restored list can't replace a new message,
+  // and for a clear, so a new message can't be deleted while it is still on screen.
+  const canSend =
+    message !== '' && !isTooLong && !isWaitingForReply && !isLoadingHistory && !isClearing
+  // Clearing waits for a reply, which the server would save after the clear.
+  const canClear = !isWaitingForReply && !isLoadingHistory
 
   // Load the saved conversation once, when the panel opens.
   useEffect(() => {
@@ -129,6 +136,24 @@ export function ChatPanel({ npc, onClose }: { npc: Npc; onClose: () => void }) {
       setFailedSend({ message: visitorMessage, reason })
     } finally {
       setIsWaitingForReply(false)
+    }
+  }
+
+  /**
+   * Delete the visitor's saved conversations with every NPC, then empty this panel.
+   * Throws if the server could not delete them, so the panel keeps what it shows.
+   */
+  async function clearAllConversations() {
+    setIsClearing(true)
+
+    try {
+      await clearConversations()
+      setMessages([])
+      // A failed message or a failed load belongs to the conversation that is now gone.
+      setFailedSend(null)
+      setHistoryFailed(false)
+    } finally {
+      setIsClearing(false)
     }
   }
 
@@ -226,6 +251,8 @@ export function ChatPanel({ npc, onClose }: { npc: Npc; onClose: () => void }) {
           Send
         </button>
       </form>
+
+      <ClearConversationsControl disabled={!canClear} onClear={clearAllConversations} />
     </aside>
   )
 }

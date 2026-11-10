@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ChatError, loadConversation, sendChatMessage } from './chat'
+import { ChatError, clearConversations, loadConversation, sendChatMessage } from './chat'
 import { getVisitorId } from './visitorId'
 
 const fetchMock = vi.fn<typeof fetch>()
@@ -121,6 +121,38 @@ describe('loadConversation', () => {
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'))
 
     const chatError = await loadConversation('test-npc').catch((caught) => caught)
+
+    expect(chatError).toBeInstanceOf(ChatError)
+    expect(chatError.code).toBe('server_unreachable')
+  })
+})
+
+describe('clearConversations', () => {
+  it("deletes this visitor's conversations", async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
+
+    await clearConversations()
+
+    const [url, options] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/conversations')
+    expect(options?.method).toBe('DELETE')
+    expect(options?.headers).toEqual({ 'X-Visitor-Id': getVisitorId() })
+  })
+
+  it("passes on the server's error code and message", async () => {
+    const error = { code: 'invalid_request', message: "That message couldn't be sent." }
+    fetchMock.mockResolvedValue(jsonResponse(422, { error }))
+
+    const chatError = await clearConversations().catch((caught) => caught)
+
+    expect(chatError).toBeInstanceOf(ChatError)
+    expect(chatError.code).toBe('invalid_request')
+  })
+
+  it('reports a plain error when the request never reaches the server', async () => {
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'))
+
+    const chatError = await clearConversations().catch((caught) => caught)
 
     expect(chatError).toBeInstanceOf(ChatError)
     expect(chatError.code).toBe('server_unreachable')

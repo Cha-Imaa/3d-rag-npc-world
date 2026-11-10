@@ -118,3 +118,12 @@ export async function loadConversation(npcId: string): Promise<SavedMessage[]> {
 
   return messages
 }
+
+/**
+ * Delete this visitor's saved conversations with every NPC.
+ *
+ * @throws ChatError if the conversations could not be deleted, so a failure never looks done.
+ */
+export async function clearConversations(): Promise<void> {
+  await requestAsVisitor('/api/conversations', { method: 'DELETE' })
+}

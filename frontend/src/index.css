@@ -244,6 +244,42 @@ body,
   cursor: not-allowed;
 }
 
+/* Set apart from the chat with a line, because it affects every conversation */
+.clear-conversations {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid #d8cbb8;
+  font-size: 14px;
+}
+
+.clear-conversations p {
+  margin: 0;
+}
+
+.clear-conversations-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.clear-conversations [role='alert'] {
+  color: #a03020;
+}
+
+/* Lighter than Send, since clearing is not the main thing the panel is for */
+.chat-panel .clear-conversations > button {
+  align-self: flex-start;
+  color: #7a5230;
+  background: transparent;
+  text-decoration: underline;
+}
+
+.chat-panel .clear-conversations button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .chat-panel-note {
   margin: 0;
   font-size: 14px;

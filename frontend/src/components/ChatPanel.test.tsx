@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ChatError,
+  clearConversations,
   loadConversation,
   sendChatMessage,
   type ChatReply,
@@ -15,12 +16,14 @@ vi.mock('../api/chat', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api/chat')>()),
   sendChatMessage: vi.fn(),
   loadConversation: vi.fn(),
+  clearConversations: vi.fn(),
 }))
 
 const NPC: Npc = { id: 'test-npc', display_name: 'Test NPC', scene_position: { q: 0, r: 0 } }
 
 const sendChatMessageMock = vi.mocked(sendChatMessage)
 const loadConversationMock = vi.mocked(loadConversation)
+const clearConversationsMock = vi.mocked(clearConversations)
 
 const LOADING_NOTE = 'Loading earlier messages…'
 
@@ -45,7 +48,15 @@ beforeEach(() => {
   sendChatMessageMock.mockResolvedValue({ answer: 'A reply.', citations: [] })
   loadConversationMock.mockReset()
   loadConversationMock.mockResolvedValue([])
+  clearConversationsMock.mockReset()
+  clearConversationsMock.mockResolvedValue(undefined)
 })
+
+/** Open the clear question and confirm it. */
+function clearAndConfirm() {
+  fireEvent.click(screen.getByRole('button', { name: 'Clear my conversations' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+}
 
 afterEach(() => {
   cleanup()
@@ -429,5 +440,77 @@ describe('ChatPanel', () => {
     expect(await screen.findByText('A reply.')).toBeTruthy()
     expect(sendChatMessageMock).toHaveBeenLastCalledWith('test-npc', 'First')
     expect(messageBox.value).toBe('Half-written next message')
+  })
+
+  describe('clearing conversations', () => {
+    const SAVED_EXCHANGE: SavedMessage[] = [
+      { role: 'visitor', content: 'Earlier question', citations: [] },
+      { role: 'npc', content: 'Earlier answer', citations: [] },
+    ]
+
+    it('empties the panel once the server has cleared them', async () => {
+      loadConversationMock.mockResolvedValue(SAVED_EXCHANGE)
+      await renderPanel()
+
+      clearAndConfirm()
+
+      expect(await screen.findByText('Your conversations were cleared.')).toBeTruthy()
+      expect(clearConversationsMock).toHaveBeenCalledOnce()
+      expect(screen.queryByText('Earlier question')).toBeNull()
+      expect(screen.getByText('No messages yet.')).toBeTruthy()
+    })
+
+    it('keeps the messages when clearing fails', async () => {
+      loadConversationMock.mockResolvedValue(SAVED_EXCHANGE)
+      clearConversationsMock.mockRejectedValue(
+        new ChatError('server_unreachable', 'Unreachable.'),
+      )
+      await renderPanel()
+
+      clearAndConfirm()
+
+      expect((await screen.findByRole('alert')).textContent).toBe('Unreachable.')
+      expect(screen.getByText('Earlier question')).toBeTruthy()
+    })
+
+    it('removes an old failure and its retry, which belonged to the cleared chat', async () => {
+      sendChatMessageMock.mockRejectedValue(new ChatError('llm_timeout', 'Too slow.'))
+      const { messageBox, sendButton } = await renderPanel()
+      typeMessage(messageBox, 'Hello')
+      fireEvent.click(sendButton)
+      await screen.findByRole('button', { name: 'Try again' })
+
+      clearAndConfirm()
+
+      await screen.findByText('Your conversations were cleared.')
+      expect(screen.queryByText('Too slow.')).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+    })
+
+    it('cannot clear while a reply is on its way, which the server saves afterwards', async () => {
+      sendChatMessageMock.mockReturnValue(new Promise(() => {}))
+      const { messageBox, sendButton } = await renderPanel()
+
+      typeMessage(messageBox, 'Hello')
+      fireEvent.click(sendButton)
+
+      const clearButton = screen.getByRole<HTMLButtonElement>('button', {
+        name: 'Clear my conversations',
+      })
+      expect(clearButton.disabled).toBe(true)
+    })
+
+    it('cannot send while clearing, and keeps the draft', async () => {
+      clearConversationsMock.mockReturnValue(new Promise(() => {}))
+      const { messageBox, sendButton } = await renderPanel()
+
+      clearAndConfirm()
+      typeMessage(messageBox, 'Hello')
+      fireEvent.keyDown(messageBox, { key: 'Enter' })
+
+      expect(sendButton.disabled).toBe(true)
+      expect(sendChatMessageMock).not.toHaveBeenCalled()
+      expect(messageBox.value).toBe('Hello')
+    })
   })
 })
