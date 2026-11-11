@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from app.citations import Citation
 from app.llm import ChatMessage, LlmErrorCode
 from app.npcs import SAFE_ID_PATTERN, NpcConfig
+from app.referrals import Referral
 from app.retrieval import RetrievedPassage
 from app.storage import SavedMessage
 
@@ -229,9 +230,11 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     """What the browser receives.
 
-    Citations are checked against the passages retrieved for this message before they are
-    sent. Referrals are added once the server can check them too.
+    Citations are checked against the passages retrieved for this message, and a referral
+    against the configured NPCs, before they are sent.
     """
 
     answer: str
     citations: list[Citation]
+    # None when the NPC suggests nobody, or its suggestion failed the checks.
+    referral: Referral | None

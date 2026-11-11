@@ -119,7 +119,7 @@ def ask(client: TestClient) -> dict:
 def test_a_planted_source_and_referral_never_reach_the_visitor(client: TestClient) -> None:
     body = ask(client)
 
-    assert body == {"answer": "My records don't cover that.", "citations": []}
+    assert body == {"answer": "My records don't cover that.", "citations": [], "referral": None}
 
 
 def test_the_document_stays_inside_one_passage_tag(client: TestClient, llm: ObedientLlm) -> None:

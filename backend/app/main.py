@@ -32,6 +32,7 @@ from app.npcs import (
     list_public_npcs,
     load_npcs,
 )
+from app.referrals import check_referral
 from app.retrieval import load_indexes, search_index
 from app.settings import Settings
 from app.storage import ConversationStore, SavedMessage
@@ -253,12 +254,13 @@ def send_chat_message(
     log_token_usage(npc.id, generated.usage)
 
     checked = check_reply(npc, generated.reply, passages)
+    referral = check_referral(npc, generated.reply, npcs)
 
     # Saved only once the reply is checked, so what is restored later is exactly what
     # the visitor saw, and a failed reply saves nothing.
     store.save_exchange(visitor_id, npc.id, chat_request.message, checked.answer, checked.citations)
 
-    return ChatResponse(answer=checked.answer, citations=checked.citations)
+    return ChatResponse(answer=checked.answer, citations=checked.citations, referral=referral)
 
 
 @app.get("/api/conversations/{npc_id}")

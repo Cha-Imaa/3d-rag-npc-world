@@ -53,6 +53,8 @@ class RecordingLlm:
         # Tests change these to act like the model answering from passages, or breaking rules.
         self.kind: ReplyKind = "no_evidence"
         self.citation_ids = ["made-up-citation"]
+        # Unchecked by default. A test sets a real NPC's ID to act like a valid referral.
+        self.referral_npc_id: str | None = "made-up-npc"
         # Every text embedded, so a test can see what each search looked for.
         self.embedded_texts: list[str] = []
 
@@ -69,7 +71,7 @@ class RecordingLlm:
             kind=self.kind,
             answer="A test answer",
             citation_ids=self.citation_ids,
-            referral_npc_id="made-up-npc",
+            referral_npc_id=self.referral_npc_id,
             referral_reason="A made-up reason",
         )
 
@@ -148,7 +150,28 @@ def send(client: TestClient, npc_id: str = "first", message: str = "Hello") -> d
 
 def test_returns_only_the_answer_and_checked_citations(client: TestClient) -> None:
     """Unchecked citations and referrals from the model must not reach the browser."""
-    assert send(client) == {"answer": "A test answer", "citations": []}
+    assert send(client) == {"answer": "A test answer", "citations": [], "referral": None}
+
+
+def test_returns_a_referral_to_another_enabled_npc(client: TestClient, llm: RecordingLlm) -> None:
+    llm.referral_npc_id = "second"
+
+    body = send(client, npc_id="first")
+
+    assert body["referral"] == {"npc_id": "second", "reason": "A made-up reason"}
+
+
+@pytest.mark.parametrize(
+    ("npc_id", "target"),
+    [("first", "hidden"), ("first", "first"), ("second", "made-up-npc")],
+)
+def test_drops_a_referral_the_visitor_cant_follow(
+    client: TestClient, llm: RecordingLlm, npc_id: str, target: str
+) -> None:
+    """A disabled NPC, the replying NPC itself, or an unknown one is never suggested."""
+    llm.referral_npc_id = target
+
+    assert send(client, npc_id=npc_id)["referral"] is None
 
 
 def test_uses_the_chosen_npcs_instructions(client: TestClient, llm: RecordingLlm) -> None:
@@ -399,7 +422,7 @@ def test_a_grounded_reply_citing_another_npcs_passage_is_replaced(
 
     body = send(client, npc_id="first", message="How deep is the well?")
 
-    assert body == {"answer": "No records for first.", "citations": []}
+    assert body == {"answer": "No records for first.", "citations": [], "referral": None}
 
 
 def test_an_npc_without_an_index_gets_a_clear_error(client: TestClient, llm: RecordingLlm) -> None:
