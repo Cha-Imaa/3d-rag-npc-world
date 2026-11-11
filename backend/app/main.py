@@ -249,7 +249,7 @@ def send_chat_message(
     passages = search_index(index, search_text, llm)
 
     messages = build_messages(chat_request.message, passages, earlier_messages)
-    generated = llm.generate_reply(build_instructions(npc), messages)
+    generated = llm.generate_reply(build_instructions(npc, npcs), messages)
     log_token_usage(npc.id, generated.usage)
 
     checked = check_reply(npc, generated.reply, passages)

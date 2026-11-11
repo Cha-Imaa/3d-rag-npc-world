@@ -90,6 +90,11 @@ def make_npc(npc_id: str, tile_q: int, enabled: bool = True) -> NpcConfig:
     )
 
 
+def make_test_npcs() -> list[NpcConfig]:
+    """Two enabled NPCs and a disabled one, as the test server is configured."""
+    return [make_npc("first", 0), make_npc("second", 1), make_npc("hidden", 2, enabled=False)]
+
+
 def make_index(knowledge_base_id: str) -> SearchIndex:
     """Build a one-passage index from DOCUMENTS, embedded with the fake."""
     text = DOCUMENTS[knowledge_base_id]
@@ -120,7 +125,7 @@ def llm() -> RecordingLlm:
 @pytest.fixture
 def client(llm: RecordingLlm) -> Iterator[TestClient]:
     """Serve two enabled NPCs and a disabled one, answered by the recording LLM."""
-    npcs = [make_npc("first", 0), make_npc("second", 1), make_npc("hidden", 2, enabled=False)]
+    npcs = make_test_npcs()
     app.dependency_overrides[get_npcs] = lambda: npcs
     app.dependency_overrides[get_llm] = lambda: llm
     indexes = {name: make_index(name) for name in DOCUMENTS}
@@ -151,7 +156,7 @@ def test_uses_the_chosen_npcs_instructions(client: TestClient, llm: RecordingLlm
     send(client, npc_id="second", message="Who are you?")
 
     [(instructions, messages)] = llm.calls
-    assert instructions == build_instructions(make_npc("second", 1))
+    assert instructions == build_instructions(make_npc("second", 1), make_test_npcs())
     assert "Instructions for first" not in instructions
     assert messages == [ChatMessage(role="user", content="Who are you?")]
 
@@ -188,7 +193,7 @@ def test_the_log_leaves_out_the_message_and_the_visitor(
 
 def test_instructions_describe_the_npc() -> None:
     """The model needs the NPC's name, personality, and expertise to speak as it."""
-    instructions = build_instructions(make_npc("first", 0))
+    instructions = build_instructions(make_npc("first", 0), make_test_npcs())
 
     assert "Test NPC" in instructions
     assert "Instructions for first" in instructions
@@ -197,14 +202,42 @@ def test_instructions_describe_the_npc() -> None:
 
 def test_shared_rules_come_after_the_character_notes() -> None:
     """The rules go last, so a personality can't talk the model out of them."""
-    instructions = build_instructions(make_npc("first", 0))
+    instructions = build_instructions(make_npc("first", 0), make_test_npcs())
 
     assert instructions.endswith(SHARED_RULES)
 
 
 def test_instructions_leave_out_the_knowledge_base() -> None:
-    """The model has no use for the private knowledge base ID."""
-    assert "collection-first" not in build_instructions(make_npc("first", 0))
+    """The model has no use for any private knowledge base ID, its own or another NPC's."""
+    instructions = build_instructions(make_npc("first", 0), make_test_npcs())
+
+    assert "collection-first" not in instructions
+    assert "collection-second" not in instructions
+
+
+def test_instructions_list_the_other_enabled_npcs() -> None:
+    """The model needs each other NPC's ID and expertise to suggest one."""
+    instructions = build_instructions(make_npc("first", 0), make_test_npcs())
+
+    assert "- id second: Test NPC. Expertise: Test expertise" in instructions
+    # Not itself, and not an NPC the visitor can't talk to.
+    assert "id first" not in instructions
+    assert "id hidden" not in instructions
+
+
+def test_instructions_leave_out_other_npcs_personalities() -> None:
+    """Another NPC's character notes are private to that NPC."""
+    instructions = build_instructions(make_npc("first", 0), make_test_npcs())
+
+    assert "Instructions for second" not in instructions
+
+
+def test_instructions_say_when_there_is_nobody_to_suggest() -> None:
+    lone_npc = make_npc("first", 0)
+
+    instructions = build_instructions(lone_npc, [lone_npc, make_npc("hidden", 2, enabled=False)])
+
+    assert "Other characters: none." in instructions
 
 
 def test_removes_spaces_around_a_message(client: TestClient, llm: RecordingLlm) -> None:
