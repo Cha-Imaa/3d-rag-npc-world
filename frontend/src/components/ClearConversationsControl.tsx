@@ -54,6 +54,11 @@ export function ClearConversationsControl({
 
   return (
     <div className="clear-conversations">
+      {/* Saved history is tied to an ID kept in this browser, not to a login, so say so plainly. */}
+      <p className="chat-panel-note">
+        Conversations are saved in this browser only. This is not a private account.
+      </p>
+
       {isConfirming ? (
         <>
           <p>Delete your saved conversations with every character?</p>
