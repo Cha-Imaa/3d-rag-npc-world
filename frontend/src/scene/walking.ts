@@ -52,6 +52,12 @@ export const NPC_RADIUS = 0.2
 /** How close the visitor must stand to talk to an NPC. */
 export const TALKING_RANGE = 1.1
 
+/** How far from an NPC's center a referral puts the visitor: clear of it, in talking range. */
+const ARRIVAL_DISTANCE = 0.6
+
+/** How many spots around an NPC are tried when looking for somewhere free to arrive. */
+const ARRIVAL_DIRECTIONS = 16
+
 /** Half the width of the bridge deck, measured from the model. */
 export const BRIDGE_HALF_WIDTH = 0.19
 
@@ -367,6 +373,51 @@ export function nearestNpcInRange(
   })
 
   return nearestNpc
+}
+
+/**
+ * Check whether the visitor stands close enough to talk to one NPC.
+ * Input: the visitor's position and the NPC's. Output: true if within talking range.
+ */
+export function isWithinTalkingRange(visitor: GroundPoint, npc: GroundPoint): boolean {
+  return Math.hypot(visitor.x - npc.x, visitor.z - npc.z) <= TALKING_RANGE
+}
+
+/**
+ * Find where to put a visitor who followed a referral: a free spot beside the NPC.
+ * Spots in a ring around the NPC are tried, and the free one nearest the visitor wins,
+ * so they arrive on the side they came from. No path is needed, because they jump there.
+ * Input: where the NPC stands, where the visitor is now, and the solid circles.
+ * Output: the spot, or null if every spot around the NPC is blocked.
+ */
+export function spotBesideNpc(
+  npc: GroundPoint,
+  visitor: GroundPoint,
+  footprints: Footprint[],
+): GroundPoint | null {
+  const ring = Array.from({ length: ARRIVAL_DIRECTIONS }, (_, index) => {
+    const angle = (index / ARRIVAL_DIRECTIONS) * Math.PI * 2
+
+    return {
+      x: npc.x + Math.cos(angle) * ARRIVAL_DISTANCE,
+      z: npc.z + Math.sin(angle) * ARRIVAL_DISTANCE,
+    }
+  })
+  const freeSpots = ring.filter((spot) => isSpotFree(spot, footprints))
+
+  let nearestSpot: GroundPoint | null = null
+  let nearestDistance = Infinity
+
+  for (const spot of freeSpots) {
+    const distance = Math.hypot(spot.x - visitor.x, spot.z - visitor.z)
+
+    if (distance < nearestDistance) {
+      nearestSpot = spot
+      nearestDistance = distance
+    }
+  }
+
+  return nearestSpot
 }
 
 /**

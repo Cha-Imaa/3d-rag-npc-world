@@ -9,8 +9,10 @@ import {
   groundHeight,
   hexToPoint,
   isSpotFree,
+  isWithinTalkingRange,
   moveWithSliding,
   nearestNpcInRange,
+  spotBesideNpc,
   START_POINT,
   TALKING_RANGE,
   turnToward,
@@ -181,6 +183,22 @@ describe('reachability', () => {
     },
   )
 
+  it.each(NPC_POINTS.map((npc, index) => [index, npc] as const))(
+    'puts a referred visitor on a free, reachable spot in talking range of NPC %i',
+    (_, npc) => {
+      const spot = spotBesideNpc(npc, START_POINT, VILLAGE_FOOTPRINTS)
+
+      expect(spot).not.toBeNull()
+      expect(isVillageSpotFree(spot!)).toBe(true)
+      expect(isWithinTalkingRange(spot!, npc)).toBe(true)
+      // Somewhere the visitor could also walk to, not a pocket walled in by buildings.
+      const isReachable = reachable.some(
+        (point) => Math.hypot(point.x - spot!.x, point.z - spot!.z) < 0.15,
+      )
+      expect(isReachable).toBe(true)
+    },
+  )
+
   it('can reach the far side of the bridge', () => {
     expect(reachable.some((point) => point.x > BRIDGE_X + 1.2)).toBe(true)
   })
@@ -275,6 +293,40 @@ describe('nearestNpcInRange', () => {
 
   it('picks the closer of two NPCs in range', () => {
     expect(nearestNpcInRange({ x: 1.2, z: 0 }, npcs)).toBe(1)
+  })
+})
+
+describe('spotBesideNpc', () => {
+  const npc = { x: 0, z: 0 }
+
+  it('arrives on the side the visitor comes from', () => {
+    const spot = spotBesideNpc(npc, { x: 0, z: -5 }, [])
+
+    expect(spot!.x).toBeCloseTo(0)
+    expect(spot!.z).toBeLessThan(0)
+    expect(isWithinTalkingRange(spot!, npc)).toBe(true)
+  })
+
+  it('skips a blocked spot and picks the next nearest free one', () => {
+    const wallOnTheNearSide = [{ x: 0, z: -0.6, radius: 0.3 }]
+
+    const spot = spotBesideNpc(npc, { x: 0, z: -5 }, wallOnTheNearSide)
+
+    expect(spot).not.toBeNull()
+    expect(isSpotFree(spot!, wallOnTheNearSide)).toBe(true)
+  })
+
+  it('finds no spot when the NPC is walled in', () => {
+    const wallAllAround = [{ x: 0, z: 0, radius: 1 }]
+
+    expect(spotBesideNpc(npc, { x: 0, z: -5 }, wallAllAround)).toBeNull()
+  })
+})
+
+describe('isWithinTalkingRange', () => {
+  it('is true at the edge of talking range and false beyond it', () => {
+    expect(isWithinTalkingRange({ x: TALKING_RANGE, z: 0 }, { x: 0, z: 0 })).toBe(true)
+    expect(isWithinTalkingRange({ x: TALKING_RANGE + 0.01, z: 0 }, { x: 0, z: 0 })).toBe(false)
   })
 })
 
