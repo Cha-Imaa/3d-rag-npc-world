@@ -45,7 +45,7 @@ function typeMessage(messageBox: HTMLTextAreaElement, text: string) {
 
 beforeEach(() => {
   sendChatMessageMock.mockReset()
-  sendChatMessageMock.mockResolvedValue({ answer: 'A reply.', citations: [] })
+  sendChatMessageMock.mockResolvedValue({ answer: 'A reply.', citations: [], referral: null })
   loadConversationMock.mockReset()
   loadConversationMock.mockResolvedValue([])
   clearConversationsMock.mockReset()
@@ -78,7 +78,7 @@ describe('ChatPanel', () => {
 
   it('shows a loading note, then the saved conversation with its sources', async () => {
     const savedMessages: SavedMessage[] = [
-      { role: 'visitor', content: 'How deep is the well?', citations: [] },
+      { role: 'visitor', content: 'How deep is the well?', citations: [], referral: null },
       {
         role: 'npc',
         content: 'Forty feet.',
@@ -92,6 +92,7 @@ describe('ChatPanel', () => {
             text: 'The old well is forty feet deep.',
           },
         ],
+        referral: null,
       },
     ]
     loadConversationMock.mockResolvedValue(savedMessages)
@@ -114,7 +115,7 @@ describe('ChatPanel', () => {
     }
     // Each NPC has its own saved conversation, as the server keeps them.
     loadConversationMock.mockImplementation(async (npcId) => [
-      { role: 'npc', content: `Saved reply from ${npcId}`, citations: [] },
+      { role: 'npc', content: `Saved reply from ${npcId}`, citations: [], referral: null },
     ])
 
     // The app gives each NPC its own panel through the key, the same way here.
@@ -130,8 +131,8 @@ describe('ChatPanel', () => {
 
   it('adds new messages after the saved ones', async () => {
     loadConversationMock.mockResolvedValue([
-      { role: 'visitor', content: 'Earlier question', citations: [] },
-      { role: 'npc', content: 'Earlier answer', citations: [] },
+      { role: 'visitor', content: 'Earlier question', citations: [], referral: null },
+      { role: 'npc', content: 'Earlier answer', citations: [], referral: null },
     ])
     const { messageBox, sendButton } = await renderPanel()
 
@@ -233,6 +234,7 @@ describe('ChatPanel', () => {
           text: 'Wells are checked each spring.',
         },
       ],
+      referral: null,
     })
     const { messageBox, sendButton } = await renderPanel()
 
@@ -273,7 +275,7 @@ describe('ChatPanel', () => {
     expect(sendButton.disabled).toBe(true)
     expect(sendChatMessageMock).toHaveBeenCalledOnce()
 
-    deliverReply({ answer: 'A late reply.', citations: [] })
+    deliverReply({ answer: 'A late reply.', citations: [], referral: null })
 
     expect(await screen.findByText('A late reply.')).toBeTruthy()
     expect(screen.queryByText('Test NPC is thinking…')).toBeNull()
@@ -443,7 +445,7 @@ describe('ChatPanel', () => {
     // The button is gone, so the cursor has to go somewhere useful.
     expect(document.activeElement).toBe(messageBox)
 
-    deliverReply({ answer: 'A late reply.', citations: [] })
+    deliverReply({ answer: 'A late reply.', citations: [], referral: null })
 
     expect(await screen.findByText('A late reply.')).toBeTruthy()
   })
@@ -466,8 +468,8 @@ describe('ChatPanel', () => {
 
   describe('clearing conversations', () => {
     const SAVED_EXCHANGE: SavedMessage[] = [
-      { role: 'visitor', content: 'Earlier question', citations: [] },
-      { role: 'npc', content: 'Earlier answer', citations: [] },
+      { role: 'visitor', content: 'Earlier question', citations: [], referral: null },
+      { role: 'npc', content: 'Earlier answer', citations: [], referral: null },
     ]
 
     it('empties the panel once the server has cleared them', async () => {

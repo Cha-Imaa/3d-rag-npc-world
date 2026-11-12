@@ -5,6 +5,7 @@ import {
   loadConversation,
   sendChatMessage,
   type Citation,
+  type Referral,
   type SavedMessage,
 } from '../api/chat'
 import type { Npc } from '../api/npcs'
@@ -26,6 +27,8 @@ type ChatMessage = {
   text: string
   /** The sources an NPC's answer relied on. Always empty for the visitor's messages. */
   citations: Citation[]
+  /** Another NPC the answer suggested. Always null for the visitor's messages. */
+  referral: Referral | null
 }
 
 /** A message that got no reply, and the plain reason to show the visitor. */
@@ -39,7 +42,12 @@ type FailedSend = {
  * Input: the saved message. Output: the same message, with the panel's field names.
  */
 function toPanelMessage(saved: SavedMessage): ChatMessage {
-  return { speaker: saved.role, text: saved.content, citations: saved.citations }
+  return {
+    speaker: saved.role,
+    text: saved.content,
+    citations: saved.citations,
+    referral: saved.referral,
+  }
 }
 
 /**
@@ -112,9 +120,14 @@ export function ChatPanel({ npc, onClose }: { npc: Npc; onClose: () => void }) {
     }
   }, [messages, isWaitingForReply])
 
-  /** Add one message, and any sources it has, to the end of the conversation. */
-  function addMessage(speaker: ChatMessage['speaker'], text: string, citations: Citation[] = []) {
-    setMessages((currentMessages) => [...currentMessages, { speaker, text, citations }])
+  /** Add one message, and any sources and referral it has, to the end of the conversation. */
+  function addMessage(
+    speaker: ChatMessage['speaker'],
+    text: string,
+    citations: Citation[] = [],
+    referral: Referral | null = null,
+  ) {
+    setMessages((currentMessages) => [...currentMessages, { speaker, text, citations, referral }])
   }
 
   /**
@@ -130,7 +143,7 @@ export function ChatPanel({ npc, onClose }: { npc: Npc; onClose: () => void }) {
 
     try {
       const reply = await sendChatMessage(npc.id, visitorMessage)
-      addMessage('npc', reply.answer, reply.citations)
+      addMessage('npc', reply.answer, reply.citations, reply.referral)
     } catch (error) {
       const reason = error instanceof ChatError ? error.message : FALLBACK_ERROR_MESSAGE
       setFailedSend({ message: visitorMessage, reason })
