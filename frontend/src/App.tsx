@@ -18,7 +18,8 @@ function App() {
   const [canShowScene] = useState(isWebGLAvailable)
   const [isHintVisible, setIsHintVisible] = useState(shouldShowFirstVisitHint)
 
-  const npcCount = useVillageStore((state) => state.npcs.length)
+  const npcs = useVillageStore((state) => state.npcs)
+  const npcCount = npcs.length
   const npcListStatus = useVillageStore((state) => state.npcListStatus)
   const nearbyNpc = useVillageStore(selectNearbyNpc)
   const talkingNpc = useVillageStore(selectTalkingNpc)
@@ -48,7 +49,16 @@ function App() {
           {isHintVisible && <FirstVisitHint onDismiss={dismissHint} />}
           {nearbyNpc && !talkingNpc && <TalkPrompt npcName={nearbyNpc.display_name} />}
           {/* The key gives each NPC a fresh panel, so a draft never carries over to another NPC. */}
-          {talkingNpc && <ChatPanel key={talkingNpc.id} npc={talkingNpc} onClose={stopTalking} />}
+          {/* Following a referral opens the other NPC's chat. It never sends a message. */}
+          {talkingNpc && (
+            <ChatPanel
+              key={talkingNpc.id}
+              npc={talkingNpc}
+              npcs={npcs}
+              onFollowReferral={startTalking}
+              onClose={stopTalking}
+            />
+          )}
         </SceneErrorBoundary>
       ) : (
         <SceneFallback

@@ -11,6 +11,7 @@ import {
 import type { Npc } from '../api/npcs'
 import { CitationList } from './CitationList'
 import { ClearConversationsControl } from './ClearConversationsControl'
+import { ReferralCard } from './ReferralCard'
 
 /** The server refuses longer messages, so the panel stops them before sending. */
 const MAX_MESSAGE_CHARACTERS = 2000
@@ -61,9 +62,20 @@ function countCharacters(text: string): number {
 /**
  * The conversation with one NPC, shown beside the village so it stays visible.
  * The saved conversation loads when the panel opens, so the visitor can carry on from it.
- * Input: the NPC being talked to, and what to run when the visitor closes the panel.
+ * Input: the NPC being talked to, every NPC in the village (to name a referral's target),
+ * what to run when the visitor follows a referral, and what to run when they close the panel.
  */
-export function ChatPanel({ npc, onClose }: { npc: Npc; onClose: () => void }) {
+export function ChatPanel({
+  npc,
+  npcs,
+  onFollowReferral,
+  onClose,
+}: {
+  npc: Npc
+  npcs: Npc[]
+  onFollowReferral: (npcId: string) => void
+  onClose: () => void
+}) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [draft, setDraft] = useState('')
   const [isWaitingForReply, setIsWaitingForReply] = useState(false)
@@ -119,6 +131,15 @@ export function ChatPanel({ npc, onClose }: { npc: Npc; onClose: () => void }) {
       messageList.scrollTop = messageList.scrollHeight
     }
   }, [messages, isWaitingForReply])
+
+  /**
+   * Find the NPC a referral suggests, among the NPCs in the village.
+   * Input: the referral, or null. Output: the NPC, or null if there is none to send the
+   * visitor to, such as a saved referral to an NPC that has since been turned off.
+   */
+  function findReferredNpc(referral: Referral | null): Npc | null {
+    return npcs.find((villageNpc) => villageNpc.id === referral?.npc_id) ?? null
+  }
 
   /** Add one message, and any sources and referral it has, to the end of the conversation. */
   function addMessage(
@@ -220,15 +241,26 @@ export function ChatPanel({ npc, onClose }: { npc: Npc; onClose: () => void }) {
 
         {/* After the saved messages load, messages are only added to the end, so their
             position is a stable key. */}
-        {messages.map((chatMessage, index) => (
-          <div key={index} className={`chat-message chat-message-${chatMessage.speaker}`}>
-            <span className="chat-message-speaker">
-              {chatMessage.speaker === 'visitor' ? 'You' : npc.display_name}
-            </span>
-            <p>{chatMessage.text}</p>
-            <CitationList citations={chatMessage.citations} />
-          </div>
-        ))}
+        {messages.map((chatMessage, index) => {
+          const referredNpc = findReferredNpc(chatMessage.referral)
+
+          return (
+            <div key={index} className={`chat-message chat-message-${chatMessage.speaker}`}>
+              <span className="chat-message-speaker">
+                {chatMessage.speaker === 'visitor' ? 'You' : npc.display_name}
+              </span>
+              <p>{chatMessage.text}</p>
+              <CitationList citations={chatMessage.citations} />
+              {referredNpc && chatMessage.referral && (
+                <ReferralCard
+                  npcName={referredNpc.display_name}
+                  reason={chatMessage.referral.reason}
+                  onFollow={() => onFollowReferral(referredNpc.id)}
+                />
+              )}
+            </div>
+          )
+        })}
 
         {isWaitingForReply && <p className="chat-panel-note">{npc.display_name} is thinking…</p>}
       </div>

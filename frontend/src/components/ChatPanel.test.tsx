@@ -20,6 +20,13 @@ vi.mock('../api/chat', async (importOriginal) => ({
 }))
 
 const NPC: Npc = { id: 'test-npc', display_name: 'Test NPC', scene_position: { q: 0, r: 0 } }
+const SECOND_NPC: Npc = {
+  id: 'second-npc',
+  display_name: 'Second NPC',
+  scene_position: { q: 2, r: 0 },
+}
+/** Every NPC in the village, so a referral can name its target. */
+const NPCS = [NPC, SECOND_NPC]
 
 const sendChatMessageMock = vi.mocked(sendChatMessage)
 const loadConversationMock = vi.mocked(loadConversation)
@@ -29,7 +36,7 @@ const LOADING_NOTE = 'Loading earlier messages…'
 
 /** Render the panel, wait for the saved messages to load, and return its box and button. */
 async function renderPanel() {
-  render(<ChatPanel npc={NPC} onClose={vi.fn()} />)
+  render(<ChatPanel npc={NPC} npcs={NPCS} onFollowReferral={vi.fn()} onClose={vi.fn()} />)
   await waitFor(() => expect(screen.queryByText(LOADING_NOTE)).toBeNull())
 
   return {
@@ -96,7 +103,7 @@ describe('ChatPanel', () => {
       },
     ]
     loadConversationMock.mockResolvedValue(savedMessages)
-    render(<ChatPanel npc={NPC} onClose={vi.fn()} />)
+    render(<ChatPanel npc={NPC} npcs={NPCS} onFollowReferral={vi.fn()} onClose={vi.fn()} />)
 
     expect(screen.getByText(LOADING_NOTE)).toBeTruthy()
     expect(await screen.findByText('Forty feet.')).toBeTruthy()
@@ -119,10 +126,20 @@ describe('ChatPanel', () => {
     ])
 
     // The app gives each NPC its own panel through the key, the same way here.
-    const { rerender } = render(<ChatPanel key={NPC.id} npc={NPC} onClose={vi.fn()} />)
+    const { rerender } = render(
+      <ChatPanel key={NPC.id} npc={NPC} npcs={NPCS} onFollowReferral={vi.fn()} onClose={vi.fn()} />,
+    )
     expect(await screen.findByText('Saved reply from test-npc')).toBeTruthy()
 
-    rerender(<ChatPanel key={OTHER_NPC.id} npc={OTHER_NPC} onClose={vi.fn()} />)
+    rerender(
+      <ChatPanel
+        key={OTHER_NPC.id}
+        npc={OTHER_NPC}
+        npcs={NPCS}
+        onFollowReferral={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    )
 
     expect(await screen.findByText('Saved reply from other-npc')).toBeTruthy()
     expect(screen.queryByText('Saved reply from test-npc')).toBeNull()
@@ -153,7 +170,7 @@ describe('ChatPanel', () => {
         deliverSavedMessages = resolve
       }),
     )
-    render(<ChatPanel npc={NPC} onClose={vi.fn()} />)
+    render(<ChatPanel npc={NPC} npcs={NPCS} onFollowReferral={vi.fn()} onClose={vi.fn()} />)
     const messageBox = screen.getByLabelText<HTMLTextAreaElement>('Your message')
     const sendButton = screen.getByRole<HTMLButtonElement>('button', { name: 'Send' })
 
@@ -194,7 +211,7 @@ describe('ChatPanel', () => {
 
   it('can be closed', async () => {
     const onClose = vi.fn()
-    render(<ChatPanel npc={NPC} onClose={onClose} />)
+    render(<ChatPanel npc={NPC} npcs={NPCS} onFollowReferral={vi.fn()} onClose={onClose} />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Close' }))
     expect(onClose).toHaveBeenCalledOnce()
@@ -535,6 +552,68 @@ describe('ChatPanel', () => {
       expect(sendButton.disabled).toBe(true)
       expect(sendChatMessageMock).not.toHaveBeenCalled()
       expect(messageBox.value).toBe('Hello')
+    })
+  })
+
+  describe('referrals', () => {
+    const REFERRAL = { npc_id: SECOND_NPC.id, reason: 'They keep the boat records.' }
+
+    it('shows a referral card under the reply that suggests another NPC', async () => {
+      sendChatMessageMock.mockResolvedValue({
+        answer: 'My records do not cover boats.',
+        citations: [],
+        referral: REFERRAL,
+      })
+      const { messageBox, sendButton } = await renderPanel()
+
+      typeMessage(messageBox, 'Who built the boats?')
+      fireEvent.click(sendButton)
+
+      expect(await screen.findByText('Suggested: Second NPC')).toBeTruthy()
+      expect(screen.getByText('They keep the boat records.')).toBeTruthy()
+    })
+
+    it('restores the referral card of a saved reply', async () => {
+      loadConversationMock.mockResolvedValue([
+        { role: 'visitor', content: 'Who built the boats?', citations: [], referral: null },
+        { role: 'npc', content: 'Not me.', citations: [], referral: REFERRAL },
+      ])
+      await renderPanel()
+
+      expect(screen.getByRole('button', { name: 'Go to Second NPC' })).toBeTruthy()
+    })
+
+    it('follows the referral only when pressed, without sending anything', async () => {
+      loadConversationMock.mockResolvedValue([
+        { role: 'npc', content: 'Not me.', citations: [], referral: REFERRAL },
+      ])
+      const onFollowReferral = vi.fn()
+      render(
+        <ChatPanel npc={NPC} npcs={NPCS} onFollowReferral={onFollowReferral} onClose={vi.fn()} />,
+      )
+      const goButton = await screen.findByRole('button', { name: 'Go to Second NPC' })
+
+      expect(onFollowReferral).not.toHaveBeenCalled()
+
+      fireEvent.click(goButton)
+
+      expect(onFollowReferral).toHaveBeenCalledExactlyOnceWith(SECOND_NPC.id)
+      expect(sendChatMessageMock).not.toHaveBeenCalled()
+    })
+
+    it('hides a referral to an NPC that is no longer in the village', async () => {
+      loadConversationMock.mockResolvedValue([
+        {
+          role: 'npc',
+          content: 'Not me.',
+          citations: [],
+          referral: { npc_id: 'removed-npc', reason: 'Ask them.' },
+        },
+      ])
+      await renderPanel()
+
+      expect(screen.getByText('Not me.')).toBeTruthy()
+      expect(screen.queryByText('Ask them.')).toBeNull()
     })
   })
 })
