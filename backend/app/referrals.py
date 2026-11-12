@@ -52,3 +52,27 @@ def check_referral(npc: NpcConfig, reply: NpcReply, all_npcs: list[NpcConfig]) -
         return None
 
     return Referral(npc_id=target.id, reason=reason)
+
+
+def drop_referral_back(
+    npc: NpcConfig, referral: Referral, target_last_referral: Referral | None
+) -> Referral | None:
+    """Drop a referral that would send the visitor straight back where they came from.
+
+    If the target NPC's latest reply suggested the NPC that is replying now, suggesting
+    the target again would bounce the visitor between the two without an answer.
+
+    Args:
+        npc: The NPC that replied.
+        referral: The checked referral from that reply.
+        target_last_referral: The referral on the visitor's latest reply from the target
+            NPC, or None if that reply had none or they have never talked.
+
+    Returns:
+        The referral, or None when it would send the visitor back.
+    """
+    if target_last_referral is not None and target_last_referral.npc_id == npc.id:
+        logger.warning("Referral removed: npc_id=%s would send the visitor back", npc.id)
+        return None
+
+    return referral

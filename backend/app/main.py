@@ -32,7 +32,7 @@ from app.npcs import (
     list_public_npcs,
     load_npcs,
 )
-from app.referrals import check_referral
+from app.referrals import check_referral, drop_referral_back
 from app.retrieval import load_indexes, search_index
 from app.settings import Settings
 from app.storage import ConversationStore, SavedMessage
@@ -255,6 +255,10 @@ def send_chat_message(
 
     checked = check_reply(npc, generated.reply, passages)
     referral = check_referral(npc, generated.reply, npcs)
+    if referral is not None:
+        # Checked before saving, so a dropped referral is never restored later either.
+        target_last_referral = store.load_last_referral(visitor_id, referral.npc_id)
+        referral = drop_referral_back(npc, referral, target_last_referral)
 
     # Saved only once the reply is checked, so what is restored later is exactly what
     # the visitor saw, and a failed reply saves nothing.

@@ -171,6 +171,34 @@ class ConversationStore:
 
         return messages
 
+    def load_last_referral(self, visitor_id: UUID, npc_id: str) -> Referral | None:
+        """Return the referral on the visitor's latest reply from one NPC.
+
+        Used to stop two NPCs from sending the visitor back and forth.
+
+        Args:
+            visitor_id: The anonymous ID the browser created.
+            npc_id: The NPC whose latest reply to check.
+
+        Returns:
+            That reply's referral, or None if it had none or they have never talked.
+        """
+        query = """
+            SELECT messages.referral_json
+            FROM messages
+            JOIN threads ON threads.id = messages.thread_id
+            WHERE threads.visitor_id = ? AND threads.npc_id = ? AND messages.role = 'npc'
+            ORDER BY messages.id DESC
+            LIMIT 1
+        """
+        with self.connect() as connection:
+            row = connection.execute(query, (str(visitor_id), npc_id)).fetchone()
+
+        if row is None or row[0] is None:
+            return None
+
+        return Referral.model_validate_json(row[0])
+
     def delete_conversations(self, visitor_id: UUID) -> None:
         """Delete every conversation of one visitor, with all their messages.
 

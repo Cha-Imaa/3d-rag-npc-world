@@ -174,6 +174,22 @@ def test_drops_a_referral_the_visitor_cant_follow(
     assert send(client, npc_id=npc_id)["referral"] is None
 
 
+def test_never_sends_the_visitor_straight_back(client: TestClient, llm: RecordingLlm) -> None:
+    """first sends the visitor to second, so second may not send them back to first."""
+    llm.referral_npc_id = "second"
+    assert send(client, npc_id="first")["referral"] is not None
+
+    llm.referral_npc_id = "first"
+    assert send(client, npc_id="second")["referral"] is None
+    # Another visitor was never sent anywhere, so second may suggest first to them.
+    response = client.post(
+        "/api/chat",
+        json={"npc_id": "second", "message": "Hello"},
+        headers={"X-Visitor-Id": "0b8e2f4c-3a1d-4e6f-8b2a-9c7d5e1f3a20"},
+    )
+    assert response.json()["referral"] == {"npc_id": "first", "reason": "A made-up reason"}
+
+
 def test_uses_the_chosen_npcs_instructions(client: TestClient, llm: RecordingLlm) -> None:
     """The LLM should get the chosen NPC's instructions and the visitor's message."""
     send(client, npc_id="second", message="Who are you?")

@@ -65,6 +65,20 @@ def test_saves_and_loads_a_reply_with_its_referral(store: ConversationStore) -> 
     ]
 
 
+def test_loads_the_referral_on_the_latest_reply_only(store: ConversationStore) -> None:
+    """Only the NPC's newest reply counts, so an old referral no longer blocks anything."""
+    referral = Referral(npc_id="second", reason="Ask them.")
+    assert store.load_last_referral(VISITOR, "first") is None
+
+    store.save_exchange(VISITOR, "first", "One", "Reply one", [], referral)
+    assert store.load_last_referral(VISITOR, "first") == referral
+    # Another visitor's conversation has no referral.
+    assert store.load_last_referral(OTHER_VISITOR, "first") is None
+
+    store.save_exchange(VISITOR, "first", "Two", "Reply two", [])
+    assert store.load_last_referral(VISITOR, "first") is None
+
+
 def test_loads_messages_oldest_first(store: ConversationStore) -> None:
     store.save_exchange(VISITOR, "first", "One", "Reply one", [])
     store.save_exchange(VISITOR, "first", "Two", "Reply two", [])

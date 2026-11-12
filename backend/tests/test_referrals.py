@@ -6,7 +6,12 @@ import pytest
 
 from app.llm import NpcReply
 from app.npcs import NpcConfig, ScenePosition
-from app.referrals import MAX_REFERRAL_REASON_CHARACTERS, Referral, check_referral
+from app.referrals import (
+    MAX_REFERRAL_REASON_CHARACTERS,
+    Referral,
+    check_referral,
+    drop_referral_back,
+)
 
 
 def make_npc(npc_id: str, tile_q: int, enabled: bool = True) -> NpcConfig:
@@ -86,3 +91,28 @@ def test_the_log_leaves_out_the_made_up_target_and_reason(
     assert "Referral removed: npc_id=first" in caplog.text
     assert "secret-target" not in caplog.text
     assert "A private reason" not in caplog.text
+
+
+# Referral loops
+
+TO_SECOND = Referral(npc_id="second", reason="They know this.")
+
+
+def test_drops_a_referral_back_to_the_npc_that_sent_the_visitor_here() -> None:
+    """second just sent the visitor to first, so first may not send them back."""
+    came_from_second = Referral(npc_id="first", reason="Ask first.")
+
+    assert drop_referral_back(REPLYING_NPC, TO_SECOND, came_from_second) is None
+
+
+@pytest.mark.parametrize(
+    "target_last_referral",
+    [
+        None,  # The visitor never talked to second, or its latest reply suggested nobody.
+        Referral(npc_id="third", reason="Ask third."),  # second sent them somewhere else.
+    ],
+)
+def test_keeps_a_referral_that_does_not_send_the_visitor_back(
+    target_last_referral: Referral | None,
+) -> None:
+    assert drop_referral_back(REPLYING_NPC, TO_SECOND, target_last_referral) == TO_SECOND
