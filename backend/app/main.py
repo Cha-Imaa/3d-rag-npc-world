@@ -258,7 +258,9 @@ def send_chat_message(
 
     # Saved only once the reply is checked, so what is restored later is exactly what
     # the visitor saw, and a failed reply saves nothing.
-    store.save_exchange(visitor_id, npc.id, chat_request.message, checked.answer, checked.citations)
+    store.save_exchange(
+        visitor_id, npc.id, chat_request.message, checked.answer, checked.citations, referral
+    )
 
     return ChatResponse(answer=checked.answer, citations=checked.citations, referral=referral)
 
@@ -279,7 +281,7 @@ def read_conversation(
         store: Where conversations are saved.
 
     Returns:
-        The messages, oldest first, with the citations each reply showed.
+        The messages, oldest first, with the citations and referral each reply showed.
 
     Raises:
         NpcNotFoundError: If the NPC does not exist or is disabled.

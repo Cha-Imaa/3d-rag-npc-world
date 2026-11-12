@@ -456,8 +456,8 @@ def test_a_reply_is_saved_with_the_visitors_message(client: TestClient) -> None:
     send(client, npc_id="first", message="Hello there")
 
     assert load_conversation(client, "first") == [
-        {"role": "visitor", "content": "Hello there", "citations": []},
-        {"role": "npc", "content": "A test answer", "citations": []},
+        {"role": "visitor", "content": "Hello there", "citations": [], "referral": None},
+        {"role": "npc", "content": "A test answer", "citations": [], "referral": None},
     ]
 
 
@@ -482,7 +482,35 @@ def test_a_replaced_reply_is_saved_as_shown(client: TestClient, llm: RecordingLl
     send(client, npc_id="first", message="How deep is the old well?")
     [_, saved_reply] = load_conversation(client, "first")
 
-    assert saved_reply == {"role": "npc", "content": "No records for first.", "citations": []}
+    assert saved_reply == {
+        "role": "npc",
+        "content": "No records for first.",
+        "citations": [],
+        "referral": None,
+    }
+
+
+def test_a_restored_reply_shows_the_same_referral(client: TestClient, llm: RecordingLlm) -> None:
+    """Reopening a conversation must show the referral card the visitor saw."""
+    llm.referral_npc_id = "second"
+
+    body = send(client, npc_id="first", message="Who knows about boats?")
+    [saved_message, saved_reply] = load_conversation(client, "first")
+
+    assert saved_reply["referral"] == body["referral"]
+    assert body["referral"] == {"npc_id": "second", "reason": "A made-up reason"}
+    # The visitor's own message never carries a referral.
+    assert saved_message["referral"] is None
+
+
+def test_a_dropped_referral_is_not_saved(client: TestClient, llm: RecordingLlm) -> None:
+    """Only a checked referral is saved, never the model's made-up one."""
+    llm.referral_npc_id = "made-up-npc"
+
+    send(client, npc_id="first")
+    [_, saved_reply] = load_conversation(client, "first")
+
+    assert saved_reply["referral"] is None
 
 
 def test_a_failed_reply_saves_nothing(client: TestClient) -> None:
