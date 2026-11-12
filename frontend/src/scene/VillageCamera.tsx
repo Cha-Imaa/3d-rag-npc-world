@@ -33,6 +33,8 @@ export function VillageCamera({ visitor }: { visitor: RefObject<VisitorState> })
 
   const mode = useRef<CameraMode>('following')
   const shot = useRef<CameraShot | null>(null)
+  /** The NPC the close-up frames, so following a referral re-frames on the new NPC. */
+  const shotNpcId = useRef<string | null>(null)
   /** The camera's position relative to its focus before a close-up, to return to afterward. */
   const savedOffset = useRef(new Vector3())
 
@@ -50,8 +52,10 @@ export function VillageCamera({ visitor }: { visitor: RefObject<VisitorState> })
     const { x, z, height } = visitor.current
     focus.current.set(x, height + FOCUS_HEIGHT, z)
 
-    // Start a close-up, or leave one, when the conversation starts or ends.
-    if (talkingNpc && mode.current !== 'closeUp') {
+    // Start a close-up, or leave one, when the conversation starts or ends. Switching to
+    // another NPC through a referral starts a new close-up of that NPC.
+    const isNewConversation = mode.current !== 'closeUp' || shotNpcId.current !== talkingNpc?.id
+    if (talkingNpc && isNewConversation) {
       // Coming back mid-glide keeps the offset saved earlier, not the half-finished view.
       if (mode.current === 'following') {
         savedOffset.current.copy(camera.position).sub(controls.target)
@@ -60,6 +64,7 @@ export function VillageCamera({ visitor }: { visitor: RefObject<VisitorState> })
       const cameraPoint = { x: camera.position.x, z: camera.position.z }
       const npcPoint = hexToPoint(talkingNpc.scene_position)
       shot.current = closeUpShot(visitor.current, npcPoint, cameraPoint)
+      shotNpcId.current = talkingNpc.id
       mode.current = 'closeUp'
     } else if (!talkingNpc && mode.current === 'closeUp') {
       mode.current = 'returning'

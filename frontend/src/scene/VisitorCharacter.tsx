@@ -1,5 +1,5 @@
 import { useFrame } from '@react-three/fiber'
-import { useMemo, useRef, useState, type RefObject } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { Vector3, type Group } from 'three'
 import { selectTalkingNpc, useVillageStore } from '../store'
 import { PlaceholderBody } from './PlaceholderBody'
@@ -10,8 +10,10 @@ import {
   facingAngle,
   groundHeight,
   hexToPoint,
+  isWithinTalkingRange,
   moveWithSliding,
   nearestNpcInRange,
+  spotBesideNpc,
   TURN_SPEED,
   turnToward,
   walkDirection,
@@ -34,7 +36,8 @@ type VisitorCharacterProps = {
 /**
  * The small character the visitor controls.
  * Input: visitor holds the live position, shared with the camera and NPCs, and updateVisitor
- * changes it. onFirstWalk runs once, on the first step. Walking stops during a conversation.
+ * changes it. onFirstWalk runs once, on the first step. Walking stops during a conversation,
+ * and following a referral moves the visitor beside the suggested NPC.
  */
 export function VisitorCharacter({
   visitor,
@@ -57,6 +60,28 @@ export function VisitorCharacter({
   const lastNearbyNpcId = useRef<string | null>(null)
   const targetFacing = useRef(visitor.current.facing)
   const cameraDirection = useRef(new Vector3())
+
+  // Put the visitor beside the NPC they are talking to, if they are out of its range.
+  // Talking normally starts in range, so this only moves them after following a referral.
+  // A layout effect runs before the next frame is drawn, so the camera's close-up already
+  // sees the new spot. If every spot around the NPC is blocked, they stay where they are.
+  useLayoutEffect(() => {
+    if (!talkingNpc) {
+      return
+    }
+
+    const npcPoint = hexToPoint(talkingNpc.scene_position)
+
+    if (isWithinTalkingRange(visitor.current, npcPoint)) {
+      return
+    }
+
+    const spot = spotBesideNpc(npcPoint, visitor.current, footprints)
+
+    if (spot) {
+      updateVisitor(spot)
+    }
+  }, [talkingNpc, footprints, visitor, updateVisitor])
 
   /** Take one step in the direction the keys point, if any are held. */
   function walkOneStep(cameraForward: Vector3, seconds: number) {
