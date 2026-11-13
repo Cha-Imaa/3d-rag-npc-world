@@ -72,6 +72,23 @@ export function idleBobLift(elapsedSeconds: number, offsetSeconds = 0): number {
 }
 
 /**
+ * Pick a steady bob offset for an NPC from its ID, so NPCs don't all bob in step.
+ * The same ID always gives the same offset, so the motion doesn't jump between visits.
+ * Input: the NPC's ID.
+ * Output: an offset in seconds, from 0 up to (not including) IDLE_BOB_SECONDS.
+ */
+export function idleBobOffset(npcId: string): number {
+  // A simple string hash. ">>> 0" keeps it a positive whole number.
+  let hash = 0
+  for (const character of npcId) {
+    hash = (hash * 31 + character.charCodeAt(0)) >>> 0
+  }
+
+  // Spread the hash over 1000 steps of one bob.
+  return ((hash % 1000) / 1000) * IDLE_BOB_SECONDS
+}
+
+/**
  * Check whether the visitor has asked their device to reduce motion.
  * Output: true if the village should stay still.
  */

@@ -5,6 +5,7 @@ import {
   IDLE_BOB_HEIGHT,
   IDLE_BOB_SECONDS,
   idleBobLift,
+  idleBobOffset,
   prefersReducedMotion,
   SPINNING_PARTS,
 } from './villageMotion'
@@ -46,6 +47,25 @@ describe('idleBobLift', () => {
 
       expect(lift).toBeGreaterThanOrEqual(0)
       expect(lift).toBeLessThanOrEqual(IDLE_BOB_HEIGHT + 1e-9)
+    }
+  })
+})
+
+describe('idleBobOffset', () => {
+  it('gives the same offset for the same ID', () => {
+    expect(idleBobOffset('npc-one')).toBe(idleBobOffset('npc-one'))
+  })
+
+  it('gives different offsets for different IDs', () => {
+    expect(idleBobOffset('npc-one')).not.toBe(idleBobOffset('npc-two'))
+  })
+
+  it('stays within one bob, even for long or empty IDs', () => {
+    for (const npcId of ['', 'a', 'npc-three', 'x'.repeat(500)]) {
+      const offset = idleBobOffset(npcId)
+
+      expect(offset).toBeGreaterThanOrEqual(0)
+      expect(offset).toBeLessThan(IDLE_BOB_SECONDS)
     }
   })
 })

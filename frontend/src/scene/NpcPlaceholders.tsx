@@ -4,7 +4,7 @@ import { useRef, useState, type RefObject } from 'react'
 import type { Group } from 'three'
 import { useVillageStore } from '../store'
 import { PlaceholderBody } from './PlaceholderBody'
-import { idleBobLift, prefersReducedMotion } from './villageMotion'
+import { idleBobLift, idleBobOffset, prefersReducedMotion } from './villageMotion'
 import {
   facingAngle,
   hexToPoint,
@@ -27,11 +27,20 @@ type NpcPlaceholderProps = {
   visitor: RefObject<VisitorState>
   isInRange: boolean
   isTalking: boolean
+  /** Seconds to shift this NPC's idle bob by, so NPCs don't move in step. */
+  bobOffsetSeconds: number
   onTalk: () => void
 }
 
 /** One neutral stand-in, which reacts when the visitor comes close or starts talking. */
-function NpcPlaceholder({ point, visitor, isInRange, isTalking, onTalk }: NpcPlaceholderProps) {
+function NpcPlaceholder({
+  point,
+  visitor,
+  isInRange,
+  isTalking,
+  bobOffsetSeconds,
+  onTalk,
+}: NpcPlaceholderProps) {
   const bodyRef = useRef<Group>(null)
   const [isHovered, setIsHovered] = useState(false)
   const [isMotionOn] = useState(() => !prefersReducedMotion())
@@ -43,7 +52,7 @@ function NpcPlaceholder({ point, visitor, isInRange, isTalking, onTalk }: NpcPla
   useFrame((state, seconds) => {
     // With reduced motion on, the body stays still on the ground.
     if (isMotionOn && bodyRef.current) {
-      bodyRef.current.position.y = idleBobLift(state.clock.elapsedTime)
+      bodyRef.current.position.y = idleBobLift(state.clock.elapsedTime, bobOffsetSeconds)
     }
 
     if (isTalking && bodyRef.current) {
@@ -124,6 +133,7 @@ export function NpcPlaceholders({ visitor }: { visitor: RefObject<VisitorState> 
           visitor={visitor}
           isInRange={nearbyNpcId === npc.id}
           isTalking={talkingNpcId === npc.id}
+          bobOffsetSeconds={idleBobOffset(npc.id)}
           onTalk={() => startTalking(npc.id)}
         />
       ))}
