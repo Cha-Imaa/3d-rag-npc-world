@@ -52,6 +52,25 @@ export function driftedPosition(
   return (((distanceFromLeftEdge % fullTrip) + fullTrip) % fullTrip) - limit
 }
 
+/** How high an idle NPC rises at the top of its bob, in world units. Small, so it reads as breathing. */
+export const IDLE_BOB_HEIGHT = 0.03
+
+/** Seconds for one full rise and fall. */
+export const IDLE_BOB_SECONDS = 2.4
+
+/**
+ * Work out how far an idle NPC is lifted at a moment in time.
+ * The lift never goes below zero, so the body never sinks into the ground.
+ * Input: elapsed seconds, and an offset in seconds so NPCs need not move together.
+ * Output: a lift between 0 and IDLE_BOB_HEIGHT.
+ */
+export function idleBobLift(elapsedSeconds: number, offsetSeconds = 0): number {
+  const angle = ((elapsedSeconds + offsetSeconds) / IDLE_BOB_SECONDS) * Math.PI * 2
+
+  // (1 - cos) / 2 runs smoothly from 0 up to 1 and back, starting at rest.
+  return (IDLE_BOB_HEIGHT * (1 - Math.cos(angle))) / 2
+}
+
 /**
  * Check whether the visitor has asked their device to reduce motion.
  * Output: true if the village should stay still.
