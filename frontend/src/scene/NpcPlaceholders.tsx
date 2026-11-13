@@ -4,7 +4,7 @@ import { useRef, useState, type RefObject } from 'react'
 import type { Group } from 'three'
 import { useVillageStore } from '../store'
 import { PlaceholderBody } from './PlaceholderBody'
-import { prefersReducedMotion } from './villageMotion'
+import { idleBobLift, prefersReducedMotion } from './villageMotion'
 import {
   facingAngle,
   hexToPoint,
@@ -39,8 +39,13 @@ function NpcPlaceholder({ point, visitor, isInRange, isTalking, onTalk }: NpcPla
   // Distant NPCs cannot be clicked, so they must not look clickable.
   useCursor(isHovered && isInRange)
 
-  /** Turn toward the visitor during a conversation. */
-  useFrame((_, seconds) => {
+  /** Bob gently while idle, and turn toward the visitor during a conversation. */
+  useFrame((state, seconds) => {
+    // With reduced motion on, the body stays still on the ground.
+    if (isMotionOn && bodyRef.current) {
+      bodyRef.current.position.y = idleBobLift(state.clock.elapsedTime)
+    }
+
     if (isTalking && bodyRef.current) {
       const towardVisitor = facingAngle(point, visitor.current)
       const largestTurn = isMotionOn ? TURN_SPEED * seconds : Math.PI * 2
