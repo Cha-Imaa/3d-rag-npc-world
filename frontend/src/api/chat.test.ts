@@ -28,7 +28,7 @@ afterEach(() => {
 
 describe('sendChatMessage', () => {
   it('sends the NPC, the message, and the visitor ID', async () => {
-    fetchMock.mockResolvedValue(jsonResponse(200, { answer: 'Hello there', citations: [] }))
+    fetchMock.mockResolvedValue(jsonResponse(200, { answer: 'Hello there', citations: [], referral: null }))
 
     await sendChatMessage('test-npc', 'Hello')
 
@@ -43,11 +43,12 @@ describe('sendChatMessage', () => {
   })
 
   it('returns the reply', async () => {
-    fetchMock.mockResolvedValue(jsonResponse(200, { answer: 'Hello there', citations: [] }))
+    fetchMock.mockResolvedValue(jsonResponse(200, { answer: 'Hello there', citations: [], referral: null }))
 
     expect(await sendChatMessage('test-npc', 'Hello')).toEqual({
       answer: 'Hello there',
       citations: [],
+      referral: null,
     })
   })
 
@@ -99,8 +100,8 @@ describe('loadConversation', () => {
 
   it('returns the saved messages, oldest first', async () => {
     const messages = [
-      { role: 'visitor', content: 'Hello', citations: [] },
-      { role: 'npc', content: 'Welcome.', citations: [] },
+      { role: 'visitor', content: 'Hello', citations: [], referral: null },
+      { role: 'npc', content: 'Welcome.', citations: [], referral: null },
     ]
     fetchMock.mockResolvedValue(jsonResponse(200, { messages }))
 

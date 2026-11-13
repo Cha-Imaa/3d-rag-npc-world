@@ -14,10 +14,22 @@ export type Citation = {
   text: string
 }
 
-/** An NPC's reply, as sent by POST /api/chat. Referrals join it later. */
+/**
+ * A suggestion to talk to another NPC. The server only sends one that names another
+ * enabled NPC, so the ID always matches an NPC from GET /api/npcs.
+ */
+export type Referral = {
+  npc_id: string
+  /** A short reason, shown on the referral card. */
+  reason: string
+}
+
+/** An NPC's reply, as sent by POST /api/chat. */
 export type ChatReply = {
   answer: string
   citations: Citation[]
+  /** Null when the NPC suggests nobody. */
+  referral: Referral | null
 }
 
 /** One saved message, as sent by GET /api/conversations/{npc_id}, oldest first. */
@@ -26,6 +38,8 @@ export type SavedMessage = {
   content: string
   /** The sources an NPC's reply showed. Always empty for the visitor's messages. */
   citations: Citation[]
+  /** The referral an NPC's reply showed. Always null for the visitor's messages. */
+  referral: Referral | null
 }
 
 /** For failures that never reached the server's error handling, such as a stopped backend. */

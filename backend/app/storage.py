@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel
 
 from app.citations import Citation
+from app.referrals import Referral
 
 # "visitor" for what the visitor wrote, "npc" for the NPC's checked reply.
 MessageRole = Literal["visitor", "npc"]
@@ -38,6 +39,8 @@ CREATE TABLE IF NOT EXISTS messages (
     role TEXT NOT NULL CHECK (role IN ('visitor', 'npc')),
     content TEXT NOT NULL,
     citations_json TEXT NOT NULL DEFAULT '[]',
+    -- The checked referral as JSON, or NULL when the reply suggested nobody.
+    referral_json TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -52,6 +55,8 @@ class SavedMessage(BaseModel):
     content: str
     # Empty for visitor messages and for NPC replies without sources.
     citations: list[Citation]
+    # Only an NPC reply can carry one, and only after it passed the referral checks.
+    referral: Referral | None = None
 
 
 class ConversationStore:
@@ -68,6 +73,7 @@ class ConversationStore:
 
         with self.connect() as connection:
             connection.executescript(SCHEMA)
+            add_referral_column_if_missing(connection)
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -92,6 +98,7 @@ class ConversationStore:
         visitor_message: str,
         npc_answer: str,
         citations: list[Citation],
+        referral: Referral | None = None,
     ) -> None:
         """Save a visitor's message and the NPC's reply together.
 
@@ -104,8 +111,10 @@ class ConversationStore:
             visitor_message: What the visitor wrote.
             npc_answer: The checked answer shown to the visitor.
             citations: The checked citations shown under the answer.
+            referral: The checked referral shown with the answer, if any.
         """
         citations_json = json.dumps([citation.model_dump() for citation in citations])
+        referral_json = None if referral is None else referral.model_dump_json()
 
         with self.connect() as connection:
             thread_id = find_or_create_thread(connection, visitor_id, npc_id)
@@ -114,9 +123,9 @@ class ConversationStore:
                 (thread_id, visitor_message),
             )
             connection.execute(
-                "INSERT INTO messages (thread_id, role, content, citations_json)"
-                " VALUES (?, 'npc', ?, ?)",
-                (thread_id, npc_answer, citations_json),
+                "INSERT INTO messages (thread_id, role, content, citations_json, referral_json)"
+                " VALUES (?, 'npc', ?, ?, ?)",
+                (thread_id, npc_answer, citations_json, referral_json),
             )
 
     def load_messages(
@@ -134,7 +143,8 @@ class ConversationStore:
         """
         # Newest first, so LIMIT keeps the most recent. SQLite treats -1 as no limit.
         query = """
-            SELECT messages.role, messages.content, messages.citations_json
+            SELECT messages.role, messages.content, messages.citations_json,
+                messages.referral_json
             FROM messages
             JOIN threads ON threads.id = messages.thread_id
             WHERE threads.visitor_id = ? AND threads.npc_id = ?
@@ -151,12 +161,43 @@ class ConversationStore:
                 role=role,
                 content=content,
                 citations=[Citation.model_validate(item) for item in json.loads(citations_json)],
+                referral=None
+                if referral_json is None
+                else Referral.model_validate_json(referral_json),
             )
-            for role, content, citations_json in rows
+            for role, content, citations_json, referral_json in rows
         ]
         messages.reverse()  # Back to oldest first, the order they are shown in.
 
         return messages
+
+    def load_last_referral(self, visitor_id: UUID, npc_id: str) -> Referral | None:
+        """Return the referral on the visitor's latest reply from one NPC.
+
+        Used to stop two NPCs from sending the visitor back and forth.
+
+        Args:
+            visitor_id: The anonymous ID the browser created.
+            npc_id: The NPC whose latest reply to check.
+
+        Returns:
+            That reply's referral, or None if it had none or they have never talked.
+        """
+        query = """
+            SELECT messages.referral_json
+            FROM messages
+            JOIN threads ON threads.id = messages.thread_id
+            WHERE threads.visitor_id = ? AND threads.npc_id = ? AND messages.role = 'npc'
+            ORDER BY messages.id DESC
+            LIMIT 1
+        """
+        with self.connect() as connection:
+            row = connection.execute(query, (str(visitor_id), npc_id)).fetchone()
+
+        if row is None or row[0] is None:
+            return None
+
+        return Referral.model_validate_json(row[0])
 
     def delete_conversations(self, visitor_id: UUID) -> None:
         """Delete every conversation of one visitor, with all their messages.
@@ -167,6 +208,21 @@ class ConversationStore:
         with self.connect() as connection:
             # Messages go too, through ON DELETE CASCADE.
             connection.execute("DELETE FROM threads WHERE visitor_id = ?", (str(visitor_id),))
+
+
+def add_referral_column_if_missing(connection: sqlite3.Connection) -> None:
+    """Add the referral column to a database made before referrals were saved.
+
+    CREATE TABLE IF NOT EXISTS leaves an existing table as it was, so without this an
+    older local database would fail on its first save. Adding a column keeps every
+    message already saved; older replies simply have no referral.
+
+    Args:
+        connection: An open connection, inside the startup transaction.
+    """
+    columns = [row[1] for row in connection.execute("PRAGMA table_info(messages)")]
+    if "referral_json" not in columns:
+        connection.execute("ALTER TABLE messages ADD COLUMN referral_json TEXT")
 
 
 def find_or_create_thread(connection: sqlite3.Connection, visitor_id: UUID, npc_id: str) -> str:

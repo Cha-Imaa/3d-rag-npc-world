@@ -32,6 +32,7 @@ from app.npcs import (
     list_public_npcs,
     load_npcs,
 )
+from app.referrals import check_referral, drop_referral_back
 from app.retrieval import load_indexes, search_index
 from app.settings import Settings
 from app.storage import ConversationStore, SavedMessage
@@ -249,16 +250,23 @@ def send_chat_message(
     passages = search_index(index, search_text, llm)
 
     messages = build_messages(chat_request.message, passages, earlier_messages)
-    generated = llm.generate_reply(build_instructions(npc), messages)
+    generated = llm.generate_reply(build_instructions(npc, npcs), messages)
     log_token_usage(npc.id, generated.usage)
 
     checked = check_reply(npc, generated.reply, passages)
+    referral = check_referral(npc, generated.reply, npcs)
+    if referral is not None:
+        # Checked before saving, so a dropped referral is never restored later either.
+        target_last_referral = store.load_last_referral(visitor_id, referral.npc_id)
+        referral = drop_referral_back(npc, referral, target_last_referral)
 
     # Saved only once the reply is checked, so what is restored later is exactly what
     # the visitor saw, and a failed reply saves nothing.
-    store.save_exchange(visitor_id, npc.id, chat_request.message, checked.answer, checked.citations)
+    store.save_exchange(
+        visitor_id, npc.id, chat_request.message, checked.answer, checked.citations, referral
+    )
 
-    return ChatResponse(answer=checked.answer, citations=checked.citations)
+    return ChatResponse(answer=checked.answer, citations=checked.citations, referral=referral)
 
 
 @app.get("/api/conversations/{npc_id}")
@@ -277,7 +285,7 @@ def read_conversation(
         store: Where conversations are saved.
 
     Returns:
-        The messages, oldest first, with the citations each reply showed.
+        The messages, oldest first, with the citations and referral each reply showed.
 
     Raises:
         NpcNotFoundError: If the NPC does not exist or is disabled.

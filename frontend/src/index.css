@@ -186,6 +186,24 @@ body,
   border-left: 2px solid #c9b79c;
 }
 
+/* A plain first version; the look is decided later. */
+.referral-card {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 1px solid #c9b79c;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.referral-card-heading {
+  font-size: 12px;
+  color: #6b5d4f;
+}
+
+.referral-card p {
+  margin: 4px 0 6px;
+}
+
 .chat-panel-error {
   display: flex;
   align-items: center;

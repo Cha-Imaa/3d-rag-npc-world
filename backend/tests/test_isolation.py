@@ -219,4 +219,4 @@ def test_a_reply_citing_only_other_collections_falls_back_to_no_evidence(
 
     body = ask(client, npc.id, "What is the Salt Wind? How hard is ribbonstone?")
 
-    assert body == {"answer": npc.no_evidence_message, "citations": []}
+    assert body == {"answer": npc.no_evidence_message, "citations": [], "referral": None}

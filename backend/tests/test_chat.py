@@ -53,6 +53,8 @@ class RecordingLlm:
         # Tests change these to act like the model answering from passages, or breaking rules.
         self.kind: ReplyKind = "no_evidence"
         self.citation_ids = ["made-up-citation"]
+        # Unchecked by default. A test sets a real NPC's ID to act like a valid referral.
+        self.referral_npc_id: str | None = "made-up-npc"
         # Every text embedded, so a test can see what each search looked for.
         self.embedded_texts: list[str] = []
 
@@ -69,7 +71,7 @@ class RecordingLlm:
             kind=self.kind,
             answer="A test answer",
             citation_ids=self.citation_ids,
-            referral_npc_id="made-up-npc",
+            referral_npc_id=self.referral_npc_id,
             referral_reason="A made-up reason",
         )
 
@@ -88,6 +90,11 @@ def make_npc(npc_id: str, tile_q: int, enabled: bool = True) -> NpcConfig:
         no_evidence_message=f"No records for {npc_id}.",
         scene_position=ScenePosition(q=tile_q, r=0),
     )
+
+
+def make_test_npcs() -> list[NpcConfig]:
+    """Two enabled NPCs and a disabled one, as the test server is configured."""
+    return [make_npc("first", 0), make_npc("second", 1), make_npc("hidden", 2, enabled=False)]
 
 
 def make_index(knowledge_base_id: str) -> SearchIndex:
@@ -120,7 +127,7 @@ def llm() -> RecordingLlm:
 @pytest.fixture
 def client(llm: RecordingLlm) -> Iterator[TestClient]:
     """Serve two enabled NPCs and a disabled one, answered by the recording LLM."""
-    npcs = [make_npc("first", 0), make_npc("second", 1), make_npc("hidden", 2, enabled=False)]
+    npcs = make_test_npcs()
     app.dependency_overrides[get_npcs] = lambda: npcs
     app.dependency_overrides[get_llm] = lambda: llm
     indexes = {name: make_index(name) for name in DOCUMENTS}
@@ -143,7 +150,44 @@ def send(client: TestClient, npc_id: str = "first", message: str = "Hello") -> d
 
 def test_returns_only_the_answer_and_checked_citations(client: TestClient) -> None:
     """Unchecked citations and referrals from the model must not reach the browser."""
-    assert send(client) == {"answer": "A test answer", "citations": []}
+    assert send(client) == {"answer": "A test answer", "citations": [], "referral": None}
+
+
+def test_returns_a_referral_to_another_enabled_npc(client: TestClient, llm: RecordingLlm) -> None:
+    llm.referral_npc_id = "second"
+
+    body = send(client, npc_id="first")
+
+    assert body["referral"] == {"npc_id": "second", "reason": "A made-up reason"}
+
+
+@pytest.mark.parametrize(
+    ("npc_id", "target"),
+    [("first", "hidden"), ("first", "first"), ("second", "made-up-npc")],
+)
+def test_drops_a_referral_the_visitor_cant_follow(
+    client: TestClient, llm: RecordingLlm, npc_id: str, target: str
+) -> None:
+    """A disabled NPC, the replying NPC itself, or an unknown one is never suggested."""
+    llm.referral_npc_id = target
+
+    assert send(client, npc_id=npc_id)["referral"] is None
+
+
+def test_never_sends_the_visitor_straight_back(client: TestClient, llm: RecordingLlm) -> None:
+    """first sends the visitor to second, so second may not send them back to first."""
+    llm.referral_npc_id = "second"
+    assert send(client, npc_id="first")["referral"] is not None
+
+    llm.referral_npc_id = "first"
+    assert send(client, npc_id="second")["referral"] is None
+    # Another visitor was never sent anywhere, so second may suggest first to them.
+    response = client.post(
+        "/api/chat",
+        json={"npc_id": "second", "message": "Hello"},
+        headers={"X-Visitor-Id": "0b8e2f4c-3a1d-4e6f-8b2a-9c7d5e1f3a20"},
+    )
+    assert response.json()["referral"] == {"npc_id": "first", "reason": "A made-up reason"}
 
 
 def test_uses_the_chosen_npcs_instructions(client: TestClient, llm: RecordingLlm) -> None:
@@ -151,7 +195,7 @@ def test_uses_the_chosen_npcs_instructions(client: TestClient, llm: RecordingLlm
     send(client, npc_id="second", message="Who are you?")
 
     [(instructions, messages)] = llm.calls
-    assert instructions == build_instructions(make_npc("second", 1))
+    assert instructions == build_instructions(make_npc("second", 1), make_test_npcs())
     assert "Instructions for first" not in instructions
     assert messages == [ChatMessage(role="user", content="Who are you?")]
 
@@ -188,7 +232,7 @@ def test_the_log_leaves_out_the_message_and_the_visitor(
 
 def test_instructions_describe_the_npc() -> None:
     """The model needs the NPC's name, personality, and expertise to speak as it."""
-    instructions = build_instructions(make_npc("first", 0))
+    instructions = build_instructions(make_npc("first", 0), make_test_npcs())
 
     assert "Test NPC" in instructions
     assert "Instructions for first" in instructions
@@ -197,14 +241,42 @@ def test_instructions_describe_the_npc() -> None:
 
 def test_shared_rules_come_after_the_character_notes() -> None:
     """The rules go last, so a personality can't talk the model out of them."""
-    instructions = build_instructions(make_npc("first", 0))
+    instructions = build_instructions(make_npc("first", 0), make_test_npcs())
 
     assert instructions.endswith(SHARED_RULES)
 
 
 def test_instructions_leave_out_the_knowledge_base() -> None:
-    """The model has no use for the private knowledge base ID."""
-    assert "collection-first" not in build_instructions(make_npc("first", 0))
+    """The model has no use for any private knowledge base ID, its own or another NPC's."""
+    instructions = build_instructions(make_npc("first", 0), make_test_npcs())
+
+    assert "collection-first" not in instructions
+    assert "collection-second" not in instructions
+
+
+def test_instructions_list_the_other_enabled_npcs() -> None:
+    """The model needs each other NPC's ID and expertise to suggest one."""
+    instructions = build_instructions(make_npc("first", 0), make_test_npcs())
+
+    assert "- id second: Test NPC. Expertise: Test expertise" in instructions
+    # Not itself, and not an NPC the visitor can't talk to.
+    assert "id first" not in instructions
+    assert "id hidden" not in instructions
+
+
+def test_instructions_leave_out_other_npcs_personalities() -> None:
+    """Another NPC's character notes are private to that NPC."""
+    instructions = build_instructions(make_npc("first", 0), make_test_npcs())
+
+    assert "Instructions for second" not in instructions
+
+
+def test_instructions_say_when_there_is_nobody_to_suggest() -> None:
+    lone_npc = make_npc("first", 0)
+
+    instructions = build_instructions(lone_npc, [lone_npc, make_npc("hidden", 2, enabled=False)])
+
+    assert "Other characters: none." in instructions
 
 
 def test_removes_spaces_around_a_message(client: TestClient, llm: RecordingLlm) -> None:
@@ -366,7 +438,7 @@ def test_a_grounded_reply_citing_another_npcs_passage_is_replaced(
 
     body = send(client, npc_id="first", message="How deep is the well?")
 
-    assert body == {"answer": "No records for first.", "citations": []}
+    assert body == {"answer": "No records for first.", "citations": [], "referral": None}
 
 
 def test_an_npc_without_an_index_gets_a_clear_error(client: TestClient, llm: RecordingLlm) -> None:
@@ -400,8 +472,8 @@ def test_a_reply_is_saved_with_the_visitors_message(client: TestClient) -> None:
     send(client, npc_id="first", message="Hello there")
 
     assert load_conversation(client, "first") == [
-        {"role": "visitor", "content": "Hello there", "citations": []},
-        {"role": "npc", "content": "A test answer", "citations": []},
+        {"role": "visitor", "content": "Hello there", "citations": [], "referral": None},
+        {"role": "npc", "content": "A test answer", "citations": [], "referral": None},
     ]
 
 
@@ -426,7 +498,35 @@ def test_a_replaced_reply_is_saved_as_shown(client: TestClient, llm: RecordingLl
     send(client, npc_id="first", message="How deep is the old well?")
     [_, saved_reply] = load_conversation(client, "first")
 
-    assert saved_reply == {"role": "npc", "content": "No records for first.", "citations": []}
+    assert saved_reply == {
+        "role": "npc",
+        "content": "No records for first.",
+        "citations": [],
+        "referral": None,
+    }
+
+
+def test_a_restored_reply_shows_the_same_referral(client: TestClient, llm: RecordingLlm) -> None:
+    """Reopening a conversation must show the referral card the visitor saw."""
+    llm.referral_npc_id = "second"
+
+    body = send(client, npc_id="first", message="Who knows about boats?")
+    [saved_message, saved_reply] = load_conversation(client, "first")
+
+    assert saved_reply["referral"] == body["referral"]
+    assert body["referral"] == {"npc_id": "second", "reason": "A made-up reason"}
+    # The visitor's own message never carries a referral.
+    assert saved_message["referral"] is None
+
+
+def test_a_dropped_referral_is_not_saved(client: TestClient, llm: RecordingLlm) -> None:
+    """Only a checked referral is saved, never the model's made-up one."""
+    llm.referral_npc_id = "made-up-npc"
+
+    send(client, npc_id="first")
+    [_, saved_reply] = load_conversation(client, "first")
+
+    assert saved_reply["referral"] is None
 
 
 def test_a_failed_reply_saves_nothing(client: TestClient) -> None:

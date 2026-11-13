@@ -7,6 +7,7 @@ from uuid import UUID
 import pytest
 
 from app.citations import Citation
+from app.referrals import Referral
 from app.storage import ConversationStore, SavedMessage
 
 VISITOR = UUID("6f1c1a52-7d3e-4b7a-9c55-0d9a7f3b2e11")
@@ -50,6 +51,32 @@ def test_saves_and_loads_an_exchange_with_its_citations(store: ConversationStore
         visitor_message("Which wind?"),
         npc_message("The Salt Wind.", [CITATION]),
     ]
+
+
+def test_saves_and_loads_a_reply_with_its_referral(store: ConversationStore) -> None:
+    """A restored reply must show the same referral card as when it was first shown."""
+    referral = Referral(npc_id="second", reason="They keep the boat records.")
+
+    store.save_exchange(VISITOR, "first", "Who knows boats?", "Not me.", [], referral)
+
+    assert store.load_messages(VISITOR, "first") == [
+        visitor_message("Who knows boats?"),
+        SavedMessage(role="npc", content="Not me.", citations=[], referral=referral),
+    ]
+
+
+def test_loads_the_referral_on_the_latest_reply_only(store: ConversationStore) -> None:
+    """Only the NPC's newest reply counts, so an old referral no longer blocks anything."""
+    referral = Referral(npc_id="second", reason="Ask them.")
+    assert store.load_last_referral(VISITOR, "first") is None
+
+    store.save_exchange(VISITOR, "first", "One", "Reply one", [], referral)
+    assert store.load_last_referral(VISITOR, "first") == referral
+    # Another visitor's conversation has no referral.
+    assert store.load_last_referral(OTHER_VISITOR, "first") is None
+
+    store.save_exchange(VISITOR, "first", "Two", "Reply two", [])
+    assert store.load_last_referral(VISITOR, "first") is None
 
 
 def test_loads_messages_oldest_first(store: ConversationStore) -> None:
@@ -151,6 +178,25 @@ def test_keeps_conversations_after_reopening_the_file(tmp_path: Path) -> None:
     reopened = ConversationStore(database_path)
 
     assert len(reopened.load_messages(VISITOR, "first")) == 2
+
+
+def test_adds_the_referral_column_to_an_older_database(tmp_path: Path) -> None:
+    """A database made before referrals were saved keeps its messages and gains the column."""
+    database_path = tmp_path / "conversations.db"
+    ConversationStore(database_path).save_exchange(VISITOR, "first", "Old", "Old reply", [])
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("ALTER TABLE messages DROP COLUMN referral_json")
+    connection.close()
+
+    reopened = ConversationStore(database_path)
+    reopened.save_exchange(
+        VISITOR, "first", "New", "New reply", [], Referral(npc_id="second", reason="Ask them.")
+    )
+
+    messages = reopened.load_messages(VISITOR, "first")
+    assert [message.content for message in messages] == ["Old", "Old reply", "New", "New reply"]
+    assert messages[1].referral is None
+    assert messages[3].referral == Referral(npc_id="second", reason="Ask them.")
 
 
 def test_creates_the_database_folder(tmp_path: Path) -> None:
