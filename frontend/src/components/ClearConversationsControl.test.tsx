@@ -16,6 +16,14 @@ afterEach(() => {
 })
 
 describe('ClearConversationsControl', () => {
+  it('explains that history is tied to this browser and is not an account', () => {
+    render(<ClearConversationsControl disabled={false} onClear={vi.fn()} />)
+
+    expect(
+      screen.getByText('Conversations are saved in this browser only. This is not a private account.'),
+    ).toBeTruthy()
+  })
+
   it('asks before clearing, with the focus on Cancel', () => {
     const onClear = vi.fn().mockResolvedValue(undefined)
     renderAndAsk(onClear)

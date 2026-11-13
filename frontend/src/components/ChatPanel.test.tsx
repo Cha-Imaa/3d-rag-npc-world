@@ -106,6 +106,28 @@ describe('ChatPanel', () => {
     expect(screen.queryByText('No messages yet.')).toBeNull()
   })
 
+  it("shows only the opened NPC's saved messages when the visitor moves to another NPC", async () => {
+    const OTHER_NPC: Npc = {
+      id: 'other-npc',
+      display_name: 'Other NPC',
+      scene_position: { q: 1, r: 0 },
+    }
+    // Each NPC has its own saved conversation, as the server keeps them.
+    loadConversationMock.mockImplementation(async (npcId) => [
+      { role: 'npc', content: `Saved reply from ${npcId}`, citations: [] },
+    ])
+
+    // The app gives each NPC its own panel through the key, the same way here.
+    const { rerender } = render(<ChatPanel key={NPC.id} npc={NPC} onClose={vi.fn()} />)
+    expect(await screen.findByText('Saved reply from test-npc')).toBeTruthy()
+
+    rerender(<ChatPanel key={OTHER_NPC.id} npc={OTHER_NPC} onClose={vi.fn()} />)
+
+    expect(await screen.findByText('Saved reply from other-npc')).toBeTruthy()
+    expect(screen.queryByText('Saved reply from test-npc')).toBeNull()
+    expect(loadConversationMock).toHaveBeenLastCalledWith('other-npc')
+  })
+
   it('adds new messages after the saved ones', async () => {
     loadConversationMock.mockResolvedValue([
       { role: 'visitor', content: 'Earlier question', citations: [] },
