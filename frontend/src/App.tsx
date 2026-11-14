@@ -31,7 +31,9 @@ function App() {
     loadNpcs()
   }, [loadNpcs])
 
-  useTalkingKeys({ nearbyNpcId: nearbyNpc?.id ?? null, onTalk: startTalking, onStopTalking: stopTalking })
+  // While a chat is open the "Press E" prompt is hidden, so E must not switch to another NPC.
+  const talkableNpcId = talkingNpc ? null : (nearbyNpc?.id ?? null)
+  useTalkingKeys({ nearbyNpcId: talkableNpcId, onTalk: startTalking, onStopTalking: stopTalking })
 
   /** Hide the hint for good, once the visitor has shown they found the controls. */
   function dismissHint() {
