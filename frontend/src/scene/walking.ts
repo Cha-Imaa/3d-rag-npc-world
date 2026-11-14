@@ -74,6 +74,13 @@ const BACK_KEYS = ['KeyS', 'ArrowDown']
 const LEFT_KEYS = ['KeyA', 'ArrowLeft']
 const RIGHT_KEYS = ['KeyD', 'ArrowRight']
 
+/** Keys that turn the camera around the visitor, for visitors who can't drag the mouse. */
+const TURN_CAMERA_LEFT_KEYS = ['KeyQ']
+const TURN_CAMERA_RIGHT_KEYS = ['KeyR']
+
+/** How fast the camera keys turn the view, in radians per second (about a third of a turn). */
+export const CAMERA_TURN_SPEED = 2
+
 /**
  * How far each model reaches from its center: half the longer side of its measured box.
  * The box's far corners stick out past this circle, because using them instead would
@@ -323,6 +330,42 @@ export function walkDirection(
     x: forward.x * forwardAmount + right.x * rightAmount,
     z: forward.z * forwardAmount + right.z * rightAmount,
   })
+}
+
+/**
+ * Turn held keys into how far the camera should turn this frame.
+ * Input: the held key codes, and the frame's length in seconds.
+ * Output: radians around the vertical axis. Positive turns the view left, negative right,
+ * and 0 when no camera key is held or both are.
+ */
+export function cameraTurnAngle(heldKeys: ReadonlySet<string>, seconds: number): number {
+  const leftAmount =
+    heldAmount(heldKeys, TURN_CAMERA_LEFT_KEYS) - heldAmount(heldKeys, TURN_CAMERA_RIGHT_KEYS)
+
+  return leftAmount * CAMERA_TURN_SPEED * seconds
+}
+
+/**
+ * Swing the camera around the point it looks at, keeping its distance.
+ * Input: the camera and its focus on the ground, and the angle from cameraTurnAngle.
+ * Output: the camera's new spot on the ground. Its height does not change.
+ */
+export function orbitAroundFocus(
+  camera: GroundPoint,
+  focus: GroundPoint,
+  angle: number,
+): GroundPoint {
+  const offsetX = camera.x - focus.x
+  const offsetZ = camera.z - focus.z
+  const cos = Math.cos(angle)
+  const sin = Math.sin(angle)
+
+  // A standard turn around the vertical axis. Turning the camera's offset by an angle
+  // turns the way it looks by the same angle, because it always looks back at the focus.
+  return {
+    x: focus.x + offsetX * cos + offsetZ * sin,
+    z: focus.z - offsetX * sin + offsetZ * cos,
+  }
 }
 
 /**
