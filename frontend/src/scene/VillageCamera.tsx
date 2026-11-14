@@ -1,10 +1,19 @@
 import { OrbitControls } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
 import { useRef, useState, type ComponentRef, type RefObject } from 'react'
-import { Vector3 } from 'three'
+import { Vector3, type Camera } from 'three'
 import { selectTalkingNpc, useVillageStore } from '../store'
 import { prefersReducedMotion } from './villageMotion'
-import { closeUpShot, hexToPoint, START_POINT, type CameraShot, type VisitorState } from './walking'
+import {
+  cameraTurnAngle,
+  closeUpShot,
+  hexToPoint,
+  orbitAroundFocus,
+  START_POINT,
+  type CameraShot,
+  type VisitorState,
+} from './walking'
+import { useHeldKeys } from './walkingKeys'
 
 /** The camera looks at this height above the visitor's feet. */
 const FOCUS_HEIGHT = 0.4
@@ -23,13 +32,15 @@ type CameraMode = 'following' | 'closeUp' | 'returning'
 
 /**
  * The third-person camera. Dragging and zooming work through the orbit controls, whose
- * focus point follows the visitor. While talking, the controls pause for a closer view.
+ * focus point follows the visitor, and Q and R turn the view for keyboard-only visitors.
+ * While talking, the controls and keys pause for a closer view.
  * Input: visitor holds the live position.
  */
 export function VillageCamera({ visitor }: { visitor: RefObject<VisitorState> }) {
   const talkingNpc = useVillageStore(selectTalkingNpc)
   const controlsRef = useRef<ComponentRef<typeof OrbitControls>>(null)
   const [isMotionOn] = useState(() => !prefersReducedMotion())
+  const heldKeys = useHeldKeys()
 
   const mode = useRef<CameraMode>('following')
   const shot = useRef<CameraShot | null>(null)
@@ -41,6 +52,24 @@ export function VillageCamera({ visitor }: { visitor: RefObject<VisitorState> })
   const focus = useRef(new Vector3())
   const goalPosition = useRef(new Vector3())
   const goalTarget = useRef(new Vector3())
+
+  /**
+   * Swing the camera around its focus while Q or R is held. Height and zoom stay the same.
+   * Input: the camera, the point it looks at, and the frame's length in seconds.
+   */
+  function turnWithKeys(camera: Camera, target: Vector3, seconds: number) {
+    const angle = cameraTurnAngle(heldKeys.current, seconds)
+
+    if (angle === 0) {
+      return
+    }
+
+    const turned = orbitAroundFocus(camera.position, target, angle)
+    camera.position.x = turned.x
+    camera.position.z = turned.z
+    // Face the focus now, so this frame is drawn from the new angle, not the next one.
+    camera.lookAt(target)
+  }
 
   useFrame(({ camera }, seconds) => {
     const controls = controlsRef.current
@@ -75,6 +104,7 @@ export function VillageCamera({ visitor }: { visitor: RefObject<VisitorState> })
       const movement = goalPosition.current.copy(focus.current).sub(controls.target)
       camera.position.add(movement)
       controls.target.copy(focus.current)
+      turnWithKeys(camera, controls.target, seconds)
       return
     }
 
