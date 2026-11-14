@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type KeyboardEvent } from 'react'
 import { ChatError } from '../api/chat'
 
 /** Shown if clearing fails for an unexpected reason, so a failure is never silent. */
@@ -37,6 +37,17 @@ export function ClearConversationsControl({
     setHasAskedBefore(true)
   }
 
+  /**
+   * Cancel the question with Escape, instead of closing the whole chat.
+   * Stopping the key here keeps it from reaching the page's Escape, which closes the chat.
+   */
+  function handleKeyDown(event: KeyboardEvent) {
+    if (event.key === 'Escape' && isConfirming && !isClearing) {
+      event.stopPropagation()
+      stopConfirming()
+    }
+  }
+
   /** Clear the conversations, then report how it went. */
   async function confirmClear() {
     setIsClearing(true)
@@ -53,7 +64,7 @@ export function ClearConversationsControl({
   }
 
   return (
-    <div className="clear-conversations">
+    <div className="clear-conversations" onKeyDown={handleKeyDown}>
       {/* Saved history is tied to an ID kept in this browser, not to a login, so say so plainly. */}
       <p className="chat-panel-note">
         Conversations are saved in this browser only. This is not a private account.
