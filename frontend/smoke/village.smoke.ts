@@ -1,3 +1,5 @@
+// Some test code runs inside the browser page, so it needs the browser's types too.
+/// <reference lib="dom" />
 import { expect, test, type Page } from '@playwright/test'
 
 /**
@@ -43,4 +45,24 @@ test('a model that will not download shows an explanation, not a blank page', as
   await expect(page.getByRole('heading', { name: 'The village could not load' })).toBeVisible()
   // The title and backend badge sit outside the scene, so they stay on screen.
   await expect(page.getByRole('heading', { name: 'Loreland' })).toBeVisible()
+})
+
+test('a browser without WebGL sees the fallback message', async ({ page }) => {
+  await blockVillageModels(page)
+  // Pretend this browser has no WebGL 2 by refusing that kind of canvas drawing.
+  // This runs inside the page before the app's own code.
+  await page.addInitScript(() => {
+    const realGetContext = HTMLCanvasElement.prototype.getContext
+    HTMLCanvasElement.prototype.getContext = function (
+      this: HTMLCanvasElement,
+      ...args: Parameters<typeof realGetContext>
+    ) {
+      return args[0] === 'webgl2' ? null : realGetContext.apply(this, args)
+    } as typeof realGetContext
+  })
+  await page.goto('/')
+
+  await expect(
+    page.getByRole('heading', { name: 'This browser cannot show the village' }),
+  ).toBeVisible()
 })
