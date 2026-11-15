@@ -35,3 +35,12 @@ test('the page loads the villagers from the backend', async ({ page }) => {
     expect(npc.display_name).toBeTruthy()
   }
 })
+
+test('a model that will not download shows an explanation, not a blank page', async ({ page }) => {
+  await blockVillageModels(page)
+  await page.goto('/')
+
+  await expect(page.getByRole('heading', { name: 'The village could not load' })).toBeVisible()
+  // The title and backend badge sit outside the scene, so they stay on screen.
+  await expect(page.getByRole('heading', { name: 'Loreland' })).toBeVisible()
+})
