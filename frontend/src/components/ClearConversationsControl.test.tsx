@@ -43,6 +43,22 @@ describe('ClearConversationsControl', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: CLEAR_BUTTON }))
   })
 
+  it('cancels the question with Escape, without closing the chat', () => {
+    const onClear = vi.fn().mockResolvedValue(undefined)
+    // Stands in for the page's Escape, which closes the chat.
+    const onPageEscape = vi.fn()
+    window.addEventListener('keydown', onPageEscape)
+    renderAndAsk(onClear)
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Cancel' }), { key: 'Escape' })
+    window.removeEventListener('keydown', onPageEscape)
+
+    expect(screen.queryByText('Delete your saved conversations with every character?')).toBeNull()
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: CLEAR_BUTTON }))
+    expect(onPageEscape).not.toHaveBeenCalled()
+    expect(onClear).not.toHaveBeenCalled()
+  })
+
   it('clears once confirmed and says so', async () => {
     const onClear = vi.fn().mockResolvedValue(undefined)
     renderAndAsk(onClear)

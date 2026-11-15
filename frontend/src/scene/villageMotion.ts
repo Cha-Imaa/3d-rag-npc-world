@@ -52,6 +52,42 @@ export function driftedPosition(
   return (((distanceFromLeftEdge % fullTrip) + fullTrip) % fullTrip) - limit
 }
 
+/** How high an idle NPC rises at the top of its bob, in world units. Small, so it reads as breathing. */
+export const IDLE_BOB_HEIGHT = 0.03
+
+/** Seconds for one full rise and fall. */
+export const IDLE_BOB_SECONDS = 2.4
+
+/**
+ * Work out how far an idle NPC is lifted at a moment in time.
+ * The lift never goes below zero, so the body never sinks into the ground.
+ * Input: elapsed seconds, and an offset in seconds so NPCs need not move together.
+ * Output: a lift between 0 and IDLE_BOB_HEIGHT.
+ */
+export function idleBobLift(elapsedSeconds: number, offsetSeconds = 0): number {
+  const angle = ((elapsedSeconds + offsetSeconds) / IDLE_BOB_SECONDS) * Math.PI * 2
+
+  // (1 - cos) / 2 runs smoothly from 0 up to 1 and back, starting at rest.
+  return (IDLE_BOB_HEIGHT * (1 - Math.cos(angle))) / 2
+}
+
+/**
+ * Pick a steady bob offset for an NPC from its ID, so NPCs don't all bob in step.
+ * The same ID always gives the same offset, so the motion doesn't jump between visits.
+ * Input: the NPC's ID.
+ * Output: an offset in seconds, from 0 up to (not including) IDLE_BOB_SECONDS.
+ */
+export function idleBobOffset(npcId: string): number {
+  // A simple string hash. ">>> 0" keeps it a positive whole number.
+  let hash = 0
+  for (const character of npcId) {
+    hash = (hash * 31 + character.charCodeAt(0)) >>> 0
+  }
+
+  // Spread the hash over 1000 steps of one bob.
+  return ((hash % 1000) / 1000) * IDLE_BOB_SECONDS
+}
+
 /**
  * Check whether the visitor has asked their device to reduce motion.
  * Output: true if the village should stay still.

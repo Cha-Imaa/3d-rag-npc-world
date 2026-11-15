@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { BackendStatusBadge } from './components/BackendStatusBadge'
 import { ChatPanel } from './components/ChatPanel'
 import { FirstVisitHint } from './components/FirstVisitHint'
@@ -6,12 +6,18 @@ import { rememberHintSeen, shouldShowFirstVisitHint } from './components/hintSto
 import { NpcListNotice } from './components/NpcListNotice'
 import { SceneErrorBoundary } from './components/SceneErrorBoundary'
 import { SceneFallback } from './components/SceneFallback'
-import { SceneLoadingOverlay } from './components/SceneLoadingOverlay'
 import { TalkPrompt } from './components/TalkPrompt'
-import { VillageCanvas } from './scene/VillageCanvas'
 import { useTalkingKeys } from './scene/walkingKeys'
 import { isWebGLAvailable } from './scene/webgl'
 import { selectNearbyNpc, selectTalkingNpc, useVillageStore } from './store'
+
+/**
+ * The 3D scene downloads as its own file, after this page's code. That lets the title and
+ * a loading message appear sooner, though the total download stays the same size.
+ */
+const VillageCanvas = lazy(() =>
+  import('./scene/VillageCanvas').then((module) => ({ default: module.VillageCanvas })),
+)
 
 /** Top-level page: the 3D village, with text overlays on top. */
 function App() {
@@ -31,7 +37,9 @@ function App() {
     loadNpcs()
   }, [loadNpcs])
 
-  useTalkingKeys({ nearbyNpcId: nearbyNpc?.id ?? null, onTalk: startTalking, onStopTalking: stopTalking })
+  // While a chat is open the "Press E" prompt is hidden, so E must not switch to another NPC.
+  const talkableNpcId = talkingNpc ? null : (nearbyNpc?.id ?? null)
+  useTalkingKeys({ nearbyNpcId: talkableNpcId, onTalk: startTalking, onStopTalking: stopTalking })
 
   /** Hide the hint for good, once the visitor has shown they found the controls. */
   function dismissHint() {
@@ -43,8 +51,11 @@ function App() {
     <main className="app">
       {canShowScene ? (
         <SceneErrorBoundary>
-          <VillageCanvas onFirstWalk={dismissHint} />
-          <SceneLoadingOverlay />
+          {/* While the scene's code downloads, a plain message stands in for the progress. */}
+          {/* If the download fails, the error boundary above explains it. */}
+          <Suspense fallback={<SceneCodeLoadingMessage />}>
+            <VillageCanvas onFirstWalk={dismissHint} />
+          </Suspense>
           <NpcListNotice status={npcListStatus} npcCount={npcCount} onRetry={loadNpcs} />
           {isHintVisible && <FirstVisitHint onDismiss={dismissHint} />}
           {nearbyNpc && !talkingNpc && <TalkPrompt npcName={nearbyNpc.display_name} />}
@@ -72,6 +83,15 @@ function App() {
         <BackendStatusBadge />
       </div>
     </main>
+  )
+}
+
+/** Shown while the 3D scene's own code is still downloading, before its models start. */
+function SceneCodeLoadingMessage() {
+  return (
+    <div className="scene-loading" role="status">
+      Loading the village…
+    </div>
   )
 }
 

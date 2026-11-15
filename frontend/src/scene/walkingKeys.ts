@@ -73,7 +73,11 @@ export function useTalkingKeys({ nearbyNpcId, onTalk, onStopTalking }: TalkingKe
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.code === 'Escape') {
-        onStopTalking()
+        // While accented or Asian-language text is being composed, Escape only cancels
+        // that text, so it must not close the chat and lose the draft.
+        if (!event.isComposing) {
+          onStopTalking()
+        }
         return
       }
 

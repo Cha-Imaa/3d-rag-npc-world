@@ -104,4 +104,13 @@ describe('useTalkingKeys', () => {
 
     expect(onStopTalking).toHaveBeenCalledOnce()
   })
+
+  it('keeps talking when Escape only cancels text being composed', () => {
+    const onStopTalking = vi.fn()
+    renderHook(() => useTalkingKeys({ nearbyNpcId: 'test-npc', onTalk: vi.fn(), onStopTalking }))
+
+    fireEvent.keyDown(addTextBox(), { code: 'Escape', isComposing: true })
+
+    expect(onStopTalking).not.toHaveBeenCalled()
+  })
 })

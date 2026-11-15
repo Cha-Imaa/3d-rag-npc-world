@@ -1,6 +1,7 @@
 import { Canvas } from '@react-three/fiber'
 import { Suspense, useRef } from 'react'
 import { PCFShadowMap } from 'three'
+import { SceneLoadingOverlay } from '../components/SceneLoadingOverlay'
 import { NpcPlaceholders } from './NpcPlaceholders'
 import { Village } from './Village'
 import { VillageCamera } from './VillageCamera'
@@ -14,7 +15,8 @@ const SKY_COLOR = '#f6e0c4'
 const VILLAGE_CENTER = { x: 0, z: 0 }
 
 /**
- * The 3D view of the village. NPC details come from the shared store.
+ * The 3D view of the village, with the model download progress shown on top.
+ * NPC details come from the shared store.
  * Input: a function to run when the visitor first walks.
  */
 export function VillageCanvas({ onFirstWalk }: { onFirstWalk: () => void }) {
@@ -30,27 +32,32 @@ export function VillageCanvas({ onFirstWalk }: { onFirstWalk: () => void }) {
     Object.assign(visitor.current, changes)
   }
 
+  // The progress overlay lives here, not in App, because its drei import would otherwise
+  // pull the 3D code back into the page's first download.
   return (
-    <Canvas
-      shadows={{ type: PCFShadowMap }}
-      // Capping the pixel ratio at 2 keeps high-resolution laptops running smoothly.
-      dpr={[1, 2]}
-      camera={{ position: START_CAMERA_POSITION, fov: 40 }}
-    >
-      <VillageLighting skyColor={SKY_COLOR} />
+    <>
+      <Canvas
+        shadows={{ type: PCFShadowMap }}
+        // Capping the pixel ratio at 2 keeps high-resolution laptops running smoothly.
+        dpr={[1, 2]}
+        camera={{ position: START_CAMERA_POSITION, fov: 40 }}
+      >
+        <VillageLighting skyColor={SKY_COLOR} />
 
-      {/* The loading overlay outside the canvas shows progress while models download. */}
-      <Suspense fallback={null}>
-        <Village />
-        <NpcPlaceholders visitor={visitor} />
-        <VisitorCharacter
-          visitor={visitor}
-          updateVisitor={updateVisitor}
-          onFirstWalk={onFirstWalk}
-        />
-      </Suspense>
+        {/* The loading overlay outside the canvas shows progress while models download. */}
+        <Suspense fallback={null}>
+          <Village />
+          <NpcPlaceholders visitor={visitor} />
+          <VisitorCharacter
+            visitor={visitor}
+            updateVisitor={updateVisitor}
+            onFirstWalk={onFirstWalk}
+          />
+        </Suspense>
 
-      <VillageCamera visitor={visitor} />
-    </Canvas>
+        <VillageCamera visitor={visitor} />
+      </Canvas>
+      <SceneLoadingOverlay />
+    </>
   )
 }

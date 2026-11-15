@@ -4,6 +4,8 @@ import { BRIDGE_TILE, hexToWorld, VILLAGE_PIECES, type VillageModel } from './vi
 import {
   BRIDGE_HALF_WIDTH,
   buildFootprints,
+  CAMERA_TURN_SPEED,
+  cameraTurnAngle,
   closeUpShot,
   facingAngle,
   groundHeight,
@@ -12,6 +14,7 @@ import {
   isWithinTalkingRange,
   moveWithSliding,
   nearestNpcInRange,
+  orbitAroundFocus,
   spotBesideNpc,
   START_POINT,
   TALKING_RANGE,
@@ -261,6 +264,38 @@ describe('walkDirection', () => {
     const direction = walkDirection(new Set(['KeyW', 'KeyD']), cameraFacingNorth)
 
     expect(Math.hypot(direction!.x, direction!.z)).toBeCloseTo(1)
+  })
+})
+
+describe('camera turning keys', () => {
+  it('does not turn with no camera key held', () => {
+    expect(cameraTurnAngle(new Set(['KeyW']), 0.5)).toBe(0)
+  })
+
+  it('does not turn when both camera keys are held', () => {
+    expect(cameraTurnAngle(new Set(['KeyQ', 'KeyR']), 0.5)).toBe(0)
+  })
+
+  it('turns left with Q and right with R, by speed times time', () => {
+    expect(cameraTurnAngle(new Set(['KeyQ']), 0.5)).toBeCloseTo(CAMERA_TURN_SPEED * 0.5)
+    expect(cameraTurnAngle(new Set(['KeyR']), 0.5)).toBeCloseTo(-CAMERA_TURN_SPEED * 0.5)
+  })
+
+  it('makes a positive angle turn the view to the left', () => {
+    // The camera stands south of the focus, so it looks north (negative z), and left is
+    // negative x. After a quarter turn left it stands east of the focus, looking west.
+    const focus = { x: 0, z: 0 }
+    const moved = orbitAroundFocus({ x: 0, z: 5 }, focus, Math.PI / 2)
+
+    expect(moved.x).toBeCloseTo(5)
+    expect(moved.z).toBeCloseTo(0)
+  })
+
+  it('keeps the same distance from the focus', () => {
+    const focus = { x: 2, z: -1 }
+    const moved = orbitAroundFocus({ x: 5, z: 3 }, focus, 0.7)
+
+    expect(Math.hypot(moved.x - focus.x, moved.z - focus.z)).toBeCloseTo(5)
   })
 })
 
