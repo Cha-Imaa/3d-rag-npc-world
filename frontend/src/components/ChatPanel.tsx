@@ -90,6 +90,8 @@ export function ChatPanel({
 
   const messageListRef = useRef<HTMLDivElement>(null)
   const messageBoxRef = useRef<HTMLTextAreaElement>(null)
+  // False once the panel closes, so a reply that arrives later leaves the village alone.
+  const isPanelOpenRef = useRef(true)
 
   const message = draft.trim()
   const isTooLong = countCharacters(message) > MAX_MESSAGE_CHARACTERS
@@ -126,6 +128,17 @@ export function ChatPanel({
       isPanelOpen = false
     }
   }, [npc.id])
+
+  // When the panel closes mid-reply, stop showing the NPC as thinking straight away,
+  // instead of waiting for a reply nobody will see.
+  useEffect(() => {
+    isPanelOpenRef.current = true
+
+    return () => {
+      isPanelOpenRef.current = false
+      finishReplying(npc.id)
+    }
+  }, [npc.id, finishReplying])
 
   // Keep the newest message and the thinking note in view.
   useEffect(() => {
@@ -175,7 +188,12 @@ export function ChatPanel({
       setFailedSend({ message: visitorMessage, reason })
     } finally {
       setIsWaitingForReply(false)
-      finishReplying(npc.id)
+
+      // A closed panel already finished its reply. Finishing again could end the thinking
+      // of a new chat with the same NPC.
+      if (isPanelOpenRef.current) {
+        finishReplying(npc.id)
+      }
     }
   }
 

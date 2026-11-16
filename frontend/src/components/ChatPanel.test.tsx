@@ -318,6 +318,41 @@ describe('ChatPanel', () => {
     await waitFor(() => expect(useVillageStore.getState().replyingNpcId).toBeNull())
   })
 
+  it('stops showing the NPC as thinking when the panel closes mid-reply', async () => {
+    sendChatMessageMock.mockReturnValue(new Promise(() => {}))
+    const { messageBox, sendButton } = await renderPanel()
+
+    typeMessage(messageBox, 'Hello')
+    fireEvent.click(sendButton)
+    cleanup()
+
+    expect(useVillageStore.getState().replyingNpcId).toBeNull()
+  })
+
+  it("does not let a closed panel's late reply end a new chat's thinking", async () => {
+    let deliverFirstReply: (reply: ChatReply) => void = () => {}
+    sendChatMessageMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        deliverFirstReply = resolve
+      }),
+    )
+    const firstPanel = await renderPanel()
+    typeMessage(firstPanel.messageBox, 'Hello')
+    fireEvent.click(firstPanel.sendButton)
+    cleanup()
+
+    // The visitor reopens the same NPC and asks again before the first reply arrives.
+    sendChatMessageMock.mockReturnValueOnce(new Promise(() => {}))
+    const secondPanel = await renderPanel()
+    typeMessage(secondPanel.messageBox, 'Hello again')
+    fireEvent.click(secondPanel.sendButton)
+    deliverFirstReply({ answer: 'A late reply.', citations: [], referral: null })
+
+    await waitFor(() => expect(sendChatMessageMock).toHaveBeenCalledTimes(2))
+    await Promise.resolve()
+    expect(useVillageStore.getState().replyingNpcId).toBe(NPC.id)
+  })
+
   it('stops showing the NPC as thinking when the reply fails', async () => {
     sendChatMessageMock.mockRejectedValue(new ChatError('llm_unavailable', 'Unavailable.'))
     const { messageBox, sendButton } = await renderPanel()
