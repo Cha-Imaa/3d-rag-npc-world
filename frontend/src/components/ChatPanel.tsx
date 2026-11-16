@@ -9,6 +9,7 @@ import {
   type SavedMessage,
 } from '../api/chat'
 import type { Npc } from '../api/npcs'
+import { useVillageStore } from '../store'
 import { CitationList } from './CitationList'
 import { ClearConversationsControl } from './ClearConversationsControl'
 import { ReferralCard } from './ReferralCard'
@@ -83,6 +84,9 @@ export function ChatPanel({
   const [isLoadingHistory, setIsLoadingHistory] = useState(true)
   const [historyFailed, setHistoryFailed] = useState(false)
   const [isClearing, setIsClearing] = useState(false)
+  // The village shows the NPC as thinking while a reply is on its way.
+  const startReplying = useVillageStore((state) => state.startReplying)
+  const finishReplying = useVillageStore((state) => state.finishReplying)
 
   const messageListRef = useRef<HTMLDivElement>(null)
   const messageBoxRef = useRef<HTMLTextAreaElement>(null)
@@ -158,6 +162,7 @@ export function ChatPanel({
   async function requestReply(visitorMessage: string) {
     setFailedSend(null)
     setIsWaitingForReply(true)
+    startReplying(npc.id)
     // Clicking Send or Try again moves focus to a button that is turning off or going away,
     // so bring it back.
     messageBoxRef.current?.focus()
@@ -170,6 +175,7 @@ export function ChatPanel({
       setFailedSend({ message: visitorMessage, reason })
     } finally {
       setIsWaitingForReply(false)
+      finishReplying(npc.id)
     }
   }
 

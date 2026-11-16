@@ -9,6 +9,7 @@ import {
   type SavedMessage,
 } from '../api/chat'
 import type { Npc } from '../api/npcs'
+import { useVillageStore } from '../store'
 import { ChatPanel } from './ChatPanel'
 
 // Keep the real ChatError, so the panel can recognise it, and pretend only the network calls.
@@ -57,6 +58,7 @@ beforeEach(() => {
   loadConversationMock.mockResolvedValue([])
   clearConversationsMock.mockReset()
   clearConversationsMock.mockResolvedValue(undefined)
+  useVillageStore.setState({ replyingNpcId: null })
 })
 
 /** Open the clear question and confirm it. */
@@ -296,6 +298,35 @@ describe('ChatPanel', () => {
 
     expect(await screen.findByText('A late reply.')).toBeTruthy()
     expect(screen.queryByText('Test NPC is thinking…')).toBeNull()
+  })
+
+  it('tells the village the NPC is thinking until the reply arrives', async () => {
+    let deliverReply: (reply: ChatReply) => void = () => {}
+    sendChatMessageMock.mockReturnValue(
+      new Promise((resolve) => {
+        deliverReply = resolve
+      }),
+    )
+    const { messageBox, sendButton } = await renderPanel()
+
+    typeMessage(messageBox, 'Hello')
+    fireEvent.click(sendButton)
+    expect(useVillageStore.getState().replyingNpcId).toBe(NPC.id)
+
+    deliverReply({ answer: 'A reply.', citations: [], referral: null })
+
+    await waitFor(() => expect(useVillageStore.getState().replyingNpcId).toBeNull())
+  })
+
+  it('stops showing the NPC as thinking when the reply fails', async () => {
+    sendChatMessageMock.mockRejectedValue(new ChatError('llm_unavailable', 'Unavailable.'))
+    const { messageBox, sendButton } = await renderPanel()
+
+    typeMessage(messageBox, 'Hello')
+    fireEvent.click(sendButton)
+
+    await screen.findByRole('alert')
+    expect(useVillageStore.getState().replyingNpcId).toBeNull()
   })
 
   it('keeps the cursor in the message box after clicking Send', async () => {
