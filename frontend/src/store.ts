@@ -11,10 +11,14 @@ type VillageState = {
   nearbyNpcId: string | null
   /** The NPC in conversation with the visitor, or null for none. */
   talkingNpcId: string | null
+  /** The NPC preparing a reply, or null for none. The scene shows it as thinking. */
+  replyingNpcId: string | null
   loadNpcs: () => Promise<void>
   setNearbyNpc: (npcId: string | null) => void
   startTalking: (npcId: string) => void
   stopTalking: () => void
+  startReplying: (npcId: string) => void
+  finishReplying: (npcId: string) => void
 }
 
 export const useVillageStore = create<VillageState>((set) => ({
@@ -22,6 +26,7 @@ export const useVillageStore = create<VillageState>((set) => ({
   npcListStatus: 'loading',
   nearbyNpcId: null,
   talkingNpcId: null,
+  replyingNpcId: null,
 
   /** Fetch the NPCs. A failure leaves the village walkable and offers a retry. */
   loadNpcs: async () => {
@@ -37,6 +42,14 @@ export const useVillageStore = create<VillageState>((set) => ({
   setNearbyNpc: (npcId) => set({ nearbyNpcId: npcId }),
   startTalking: (npcId) => set({ talkingNpcId: npcId }),
   stopTalking: () => set({ talkingNpcId: null }),
+  startReplying: (npcId) => set({ replyingNpcId: npcId }),
+
+  /**
+   * Stop showing an NPC as thinking. Only clears that NPC's reply, so a late answer from a
+   * chat that was already closed can't end another NPC's thinking.
+   */
+  finishReplying: (npcId) =>
+    set((state) => (state.replyingNpcId === npcId ? { replyingNpcId: null } : {})),
 }))
 
 /** Find an NPC in the list by ID. A null ID means no NPC. */
