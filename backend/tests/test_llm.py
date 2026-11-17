@@ -10,7 +10,16 @@ from collections.abc import Callable
 import httpx2
 import pytest
 
-from app.llm import EMBEDDING_BATCH_SIZE, ChatMessage, LlmError, NpcReply, OpenAiLlm, TokenUsage
+from app.llm import (
+    EMBEDDING_BATCH_SIZE,
+    AnswerPiece,
+    ChatMessage,
+    GeneratedReply,
+    LlmError,
+    NpcReply,
+    OpenAiLlm,
+    TokenUsage,
+)
 from app.settings import Settings
 
 MESSAGES = [
@@ -358,3 +367,254 @@ def test_embedding_errors_use_the_same_codes_as_replies(
         llm.embed_texts(["Some text"])
 
     assert error_info.value.code == expected_code
+
+
+# A grounded reply, so streamed pieces have sources to carry.
+GROUNDED_REPLY = {
+    "kind": "grounded",
+    "citation_ids": ["guide.txt#1"],
+    "answer": "The well is forty feet deep, and nobody knows who dug it.",
+    "referral_npc_id": None,
+    "referral_reason": None,
+}
+
+# The output message the streamed events build up, before any text arrives.
+STREAMED_MESSAGE = {
+    "type": "message",
+    "id": "msg_test",
+    "role": "assistant",
+    "status": "in_progress",
+    "content": [],
+}
+
+
+def streamed_response_body(status: str, output: list, usage: dict | None = None) -> dict:
+    """Build the response object that OpenAI's start and end events carry."""
+    body = {
+        "id": "resp_test",
+        "object": "response",
+        "created_at": 0,
+        "model": "test-model",
+        "status": status,
+        "output": output,
+        "parallel_tool_calls": True,
+        "tool_choice": "auto",
+        "tools": [],
+    }
+    if usage is not None:
+        body["usage"] = usage
+
+    return body
+
+
+def opening_events() -> list[dict]:
+    """The events that open a streamed reply, before any text."""
+    empty_text = {"type": "output_text", "text": "", "annotations": []}
+    return [
+        {"type": "response.created", "response": streamed_response_body("in_progress", [])},
+        {"type": "response.output_item.added", "output_index": 0, "item": STREAMED_MESSAGE},
+        {
+            "type": "response.content_part.added",
+            "item_id": "msg_test",
+            "output_index": 0,
+            "content_index": 0,
+            "part": empty_text,
+        },
+    ]
+
+
+def text_events(text: str, piece_count: int = 4) -> list[dict]:
+    """Split the reply text into piece_count text events, the way OpenAI streams it."""
+    piece_length = -(-len(text) // piece_count)  # Rounds up, so no text is left over.
+    return [
+        {
+            "type": "response.output_text.delta",
+            "item_id": "msg_test",
+            "output_index": 0,
+            "content_index": 0,
+            "delta": text[start : start + piece_length],
+            "logprobs": [],
+        }
+        for start in range(0, len(text), piece_length)
+    ]
+
+
+def closing_events(text: str, usage: dict | None = None) -> list[dict]:
+    """The events that finish a successful streamed reply."""
+    finished_text = {"type": "output_text", "text": text, "annotations": []}
+    finished_message = {**STREAMED_MESSAGE, "status": "completed", "content": [finished_text]}
+    return [
+        {
+            "type": "response.output_text.done",
+            "item_id": "msg_test",
+            "output_index": 0,
+            "content_index": 0,
+            "text": text,
+            "logprobs": [],
+        },
+        {"type": "response.output_item.done", "output_index": 0, "item": finished_message},
+        {
+            "type": "response.completed",
+            "response": streamed_response_body("completed", [finished_message], usage),
+        },
+    ]
+
+
+def successful_stream_events(reply: dict, usage: dict | None = None) -> list[dict]:
+    """All the events of a streamed reply that finishes normally."""
+    text = json.dumps(reply)
+    return opening_events() + text_events(text) + closing_events(text, usage)
+
+
+def stream_body(events: list[dict]) -> bytes:
+    """Write events as server-sent events, the format OpenAI streams in."""
+    lines = []
+    for number, event in enumerate(events):
+        numbered_event = {**event, "sequence_number": number}
+        lines.append(f"event: {event['type']}\ndata: {json.dumps(numbered_event)}\n\n")
+
+    return "".join(lines).encode()
+
+
+def stream_response(events: list[dict]) -> httpx2.Response:
+    """Build a successful streamed OpenAI response that sends the given events."""
+    headers = {"content-type": "text/event-stream"}
+    return httpx2.Response(200, content=stream_body(events), headers=headers)
+
+
+def events_cut_off_with(last_event: dict | None) -> list[dict]:
+    """The events of a reply that stops part way through its text, then sends last_event."""
+    text = json.dumps(GROUNDED_REPLY)
+    events = opening_events() + text_events(text)[:2]
+    if last_event is not None:
+        events.append(last_event)
+
+    return events
+
+
+def code_of_failed_stream(handler: Callable[[httpx2.Request], httpx2.Response]) -> str:
+    """Stream a reply that should fail, and return the error code."""
+    with pytest.raises(LlmError) as error_info:
+        list(make_llm(handler).stream_reply("Test instructions", MESSAGES))
+
+    return error_info.value.code
+
+
+def test_a_streamed_reply_arrives_in_pieces_and_ends_with_the_whole_reply() -> None:
+    events = successful_stream_events(GROUNDED_REPLY, usage=TEST_USAGE)
+    llm = make_llm(lambda request: stream_response(events))
+
+    *pieces, final = llm.stream_reply("Test instructions", MESSAGES)
+
+    assert len(pieces) > 1
+    assert all(isinstance(piece, AnswerPiece) for piece in pieces)
+    assert "".join(piece.text for piece in pieces) == GROUNDED_REPLY["answer"]
+    assert final == GeneratedReply(
+        reply=NpcReply(**GROUNDED_REPLY),
+        usage=TokenUsage(input_tokens=120, output_tokens=45),
+    )
+
+
+def test_each_streamed_piece_carries_the_sources_chosen_before_the_answer() -> None:
+    events = successful_stream_events(GROUNDED_REPLY)
+    llm = make_llm(lambda request: stream_response(events))
+
+    *pieces, _final = llm.stream_reply("Test instructions", MESSAGES)
+
+    for piece in pieces:
+        assert piece.kind == "grounded"
+        assert piece.citation_ids == ["guide.txt#1"]
+
+
+def test_the_streamed_request_has_the_same_settings_as_a_normal_one() -> None:
+    sent_requests = []
+
+    def record_normal_request(request: httpx2.Request) -> httpx2.Response:
+        sent_requests.append(json.loads(request.content))
+        return response_with_text(json.dumps(VALID_REPLY))
+
+    def record_streamed_request(request: httpx2.Request) -> httpx2.Response:
+        sent_requests.append(json.loads(request.content))
+        return stream_response(successful_stream_events(VALID_REPLY))
+
+    make_llm(record_normal_request).generate_reply("Test instructions", MESSAGES)
+    list(make_llm(record_streamed_request).stream_reply("Test instructions", MESSAGES))
+
+    normal_request, streamed_request = sent_requests
+    assert streamed_request.pop("stream") is True
+    assert streamed_request == normal_request
+
+
+def test_streaming_without_a_key_fails_without_any_network_call() -> None:
+    llm = OpenAiLlm(Settings(_env_file=None, openai_api_key=None))
+
+    with pytest.raises(LlmError) as error_info:
+        list(llm.stream_reply("Test instructions", MESSAGES))
+
+    assert error_info.value.code == "llm_not_configured"
+
+
+@pytest.mark.parametrize(
+    ("status", "openai_code", "expected_code"),
+    [
+        (401, None, "llm_not_configured"),
+        (429, "insufficient_quota", "llm_out_of_credit"),
+        (500, None, "llm_unavailable"),
+    ],
+)
+def test_a_stream_that_fails_to_open_uses_the_same_codes(
+    status: int, openai_code: str | None, expected_code: str
+) -> None:
+    code = code_of_failed_stream(lambda request: error_response(status, openai_code))
+
+    assert code == expected_code
+
+
+@pytest.mark.parametrize(
+    "last_event",
+    [
+        # An error event, as OpenAI sends it.
+        {"type": "error", "code": "server_error", "message": "Test error", "param": None},
+        # An error event in the older shape, which the SDK raises as an exception.
+        {"type": "error", "error": {"message": "Test error", "type": "server_error"}},
+        # The response failed on OpenAI's side.
+        {"type": "response.failed", "response": streamed_response_body("failed", [])},
+        # The stream simply stops.
+        None,
+    ],
+)
+def test_a_stream_that_breaks_part_way_counts_as_unavailable(last_event: dict | None) -> None:
+    events = events_cut_off_with(last_event)
+
+    assert code_of_failed_stream(lambda request: stream_response(events)) == "llm_unavailable"
+
+
+def test_a_connection_lost_part_way_counts_as_unavailable() -> None:
+    first_events = stream_body(events_cut_off_with(None))
+
+    def body_then_lost_connection():
+        """Send the first events, then lose the connection."""
+        yield first_events
+        raise httpx2.ReadError("Connection lost")
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        headers = {"content-type": "text/event-stream"}
+        return httpx2.Response(200, content=body_then_lost_connection(), headers=headers)
+
+    assert code_of_failed_stream(handler) == "llm_unavailable"
+
+
+def test_a_streamed_reply_cut_off_by_the_token_limit_is_rejected() -> None:
+    incomplete = {
+        "type": "response.incomplete",
+        "response": streamed_response_body("incomplete", []),
+    }
+    events = events_cut_off_with(incomplete)
+
+    assert code_of_failed_stream(lambda request: stream_response(events)) == "llm_bad_reply"
+
+
+def test_a_streamed_blank_answer_is_rejected() -> None:
+    events = successful_stream_events({**VALID_REPLY, "answer": "  "})
+
+    assert code_of_failed_stream(lambda request: stream_response(events)) == "llm_bad_reply"
