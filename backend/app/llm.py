@@ -68,11 +68,15 @@ class ChatMessage(BaseModel):
 
 
 class NpcReply(BaseModel):
-    """The structured reply the model must return. ARCHITECTURE.md explains each field."""
+    """The structured reply the model must return. ARCHITECTURE.md explains each field.
+
+    The model writes the fields in this order. Sources come before the answer, so while a
+    reply streams the server already knows what it cites before any answer text is shown.
+    """
 
     kind: ReplyKind
-    answer: str
     citation_ids: list[str]
+    answer: str
     referral_npc_id: str | None
     referral_reason: str | None
 

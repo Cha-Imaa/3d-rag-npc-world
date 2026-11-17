@@ -162,6 +162,26 @@ def test_the_request_requires_the_structured_reply() -> None:
     assert set(text_format["schema"]["required"]) == set(VALID_REPLY)
 
 
+def test_the_reply_lists_its_sources_before_its_answer() -> None:
+    """The model writes fields in schema order, and streaming relies on sources coming first."""
+    sent_requests = []
+
+    def record_request(request: httpx2.Request) -> httpx2.Response:
+        sent_requests.append(json.loads(request.content))
+        return response_with_text(json.dumps(VALID_REPLY))
+
+    make_llm(record_request).generate_reply("Test instructions", MESSAGES)
+
+    field_order = list(sent_requests[0]["text"]["format"]["schema"]["properties"])
+    assert field_order == [
+        "kind",
+        "citation_ids",
+        "answer",
+        "referral_npc_id",
+        "referral_reason",
+    ]
+
+
 def test_a_missing_key_fails_without_any_network_call() -> None:
     llm = OpenAiLlm(Settings(_env_file=None, openai_api_key=None))
 
