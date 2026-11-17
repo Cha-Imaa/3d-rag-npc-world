@@ -11,6 +11,7 @@ import httpx2
 from openai import AuthenticationError, OpenAI, OpenAIError, RateLimitError
 from openai.types.responses import ParsedResponse
 from pydantic import BaseModel, ValidationError
+from pydantic_core import from_json
 
 from app.settings import Settings
 
@@ -79,6 +80,39 @@ class NpcReply(BaseModel):
     answer: str
     referral_npc_id: str | None
     referral_reason: str | None
+
+
+class PartialReply(BaseModel):
+    """The fields of a reply the model is still writing. Missing fields are not written yet.
+
+    kind is a plain string because it may be cut off part way, such as "groun".
+    """
+
+    kind: str | None = None
+    citation_ids: list[str] = []
+    answer: str | None = None  # None until the model starts writing the answer.
+
+
+def read_partial_reply(partial_json: str) -> PartialReply:
+    """Read what the model has written so far of its JSON reply.
+
+    Input: the reply text received so far, possibly cut off anywhere.
+    Output: the fields readable so far. A string cut off part way, even inside an escape
+    such as \\u00e9, gives the part before the cut, so each reading of the answer starts
+    with the previous one. Once the answer has started, kind and citation_ids are
+    complete, because the model writes them first (see NpcReply). Text that can't be read
+    yet, or isn't a JSON object, gives an empty PartialReply.
+    """
+    try:
+        fields = from_json(partial_json, allow_partial="trailing-strings")
+    except ValueError:
+        return PartialReply()
+    if not isinstance(fields, dict):
+        return PartialReply()
+    try:
+        return PartialReply.model_validate(fields)
+    except ValidationError:
+        return PartialReply()
 
 
 class TokenUsage(BaseModel):
