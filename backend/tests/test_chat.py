@@ -1,5 +1,6 @@
 """Tests for the chat endpoint: what it accepts, what it sends on, and how it fails."""
 
+import json
 import logging
 from collections.abc import Iterator
 from typing import get_args
@@ -20,10 +21,12 @@ from app.chat import (
 from app.ingest import Chunk, SearchIndex
 from app.llm import (
     FAKE_EMBEDDING_MODEL,
+    AnswerPiece,
     ChatMessage,
     EmbeddedTexts,
     FakeLlm,
     GeneratedReply,
+    LlmError,
     LlmErrorCode,
     NpcReply,
     ReplyKind,
@@ -57,6 +60,8 @@ class RecordingLlm:
         self.referral_npc_id: str | None = "made-up-npc"
         # Every text embedded, so a test can see what each search looked for.
         self.embedded_texts: list[str] = []
+        # A test sets this to make a streamed reply fail after its first piece.
+        self.stream_error: LlmErrorCode | None = None
 
     def embed_texts(self, texts: list[str]) -> EmbeddedTexts:
         """Record the texts, and embed them with the fake's word counts."""
@@ -76,6 +81,21 @@ class RecordingLlm:
         )
 
         return GeneratedReply(reply=reply, usage=self.usage)
+
+    def stream_reply(
+        self, instructions: str, messages: list[ChatMessage]
+    ) -> Iterator[AnswerPiece | GeneratedReply]:
+        """Record the call, and send the same reply as generate_reply in two pieces."""
+        generated = self.generate_reply(instructions, messages)
+        reply = generated.reply
+        middle = len(reply.answer) // 2
+
+        for text in (reply.answer[:middle], reply.answer[middle:]):
+            yield AnswerPiece(text=text, kind=reply.kind, citation_ids=reply.citation_ids)
+            if self.stream_error is not None:
+                raise LlmError(self.stream_error)
+
+        yield generated
 
 
 def make_npc(npc_id: str, tile_q: int, enabled: bool = True) -> NpcConfig:
@@ -727,3 +747,145 @@ def test_clearing_needs_a_valid_visitor_id(client: TestClient, headers: dict) ->
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "invalid_request"
     assert len(load_conversation(client, "first")) == 2
+
+
+# Streamed replies
+
+
+def post_stream(client: TestClient, npc_id: str = "first", message: str = "Hello"):
+    """Send a message to the stream route and return the raw response."""
+    return client.post(
+        "/api/chat/stream",
+        json={"npc_id": npc_id, "message": message},
+        headers=VISITOR_HEADERS,
+    )
+
+
+def stream_lines(client: TestClient, npc_id: str = "first", message: str = "Hello") -> list:
+    """Send a message to the stream route and return its lines, checking that it started."""
+    response = post_stream(client, npc_id, message)
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/x-ndjson"
+
+    return [json.loads(line) for line in response.text.splitlines()]
+
+
+def test_a_stream_sends_the_answer_in_pieces_then_the_checked_reply(client: TestClient) -> None:
+    lines = stream_lines(client)
+
+    assert lines == [
+        {"type": "answer_text", "text": "A test"},
+        {"type": "answer_text", "text": " answer"},
+        {
+            "type": "reply",
+            "reply": {"answer": "A test answer", "citations": [], "referral": None},
+        },
+    ]
+
+
+def test_a_streamed_reply_matches_what_the_normal_route_returns(
+    client: TestClient, llm: RecordingLlm
+) -> None:
+    """Both routes share their checks, so citations and referrals come out the same."""
+    llm.kind = "grounded"
+    llm.citation_ids = ["collection-first.txt#1", "made-up-citation"]
+    llm.referral_npc_id = "second"
+
+    normal_reply = send(client, npc_id="first", message="How deep is the well?")
+    client.delete("/api/conversations", headers=VISITOR_HEADERS)
+    streamed_reply = stream_lines(client, npc_id="first", message="How deep is the well?")[-1]
+
+    assert streamed_reply == {"type": "reply", "reply": normal_reply}
+    assert len(normal_reply["citations"]) == 1
+    assert normal_reply["referral"] is not None
+
+
+def test_an_unsupported_grounded_answer_never_streams(
+    client: TestClient, llm: RecordingLlm
+) -> None:
+    """It will be replaced, so none of it may show, even for a moment."""
+    llm.kind = "grounded"
+    llm.citation_ids = ["collection-second.txt#1"]
+
+    lines = stream_lines(client, npc_id="first", message="How deep is the well?")
+
+    assert lines == [
+        {
+            "type": "reply",
+            "reply": {"answer": "No records for first.", "citations": [], "referral": None},
+        }
+    ]
+
+
+def test_a_streamed_reply_is_saved_as_shown(client: TestClient) -> None:
+    stream_lines(client, npc_id="first", message="Hello there")
+
+    assert load_conversation(client, "first") == [
+        {"role": "visitor", "content": "Hello there", "citations": [], "referral": None},
+        {"role": "npc", "content": "A test answer", "citations": [], "referral": None},
+    ]
+
+
+@pytest.mark.parametrize("code", get_args(LlmErrorCode))
+def test_a_stream_that_fails_part_way_ends_with_an_error_and_saves_nothing(
+    client: TestClient, llm: RecordingLlm, code: LlmErrorCode
+) -> None:
+    llm.stream_error = code
+
+    lines = stream_lines(client)
+
+    assert lines == [
+        {"type": "answer_text", "text": "A test"},
+        {"type": "error", "error": {"code": code, "message": LLM_ERROR_MESSAGES[code]}},
+    ]
+    assert load_conversation(client, "first") == []
+
+
+def test_the_fake_llm_streams_through_the_route(client: TestClient) -> None:
+    """The fake is what the owner tries in the browser, so check it end to end."""
+    app.dependency_overrides[get_llm] = lambda: FakeLlm()
+
+    lines = stream_lines(client, message="How deep is the well?")
+
+    *answer_lines, reply_line = lines
+    assert len(answer_lines) > 1
+    assert all(line["type"] == "answer_text" for line in answer_lines)
+    assert reply_line["type"] == "reply"
+    streamed_answer = "".join(line["text"] for line in answer_lines)
+    assert streamed_answer == reply_line["reply"]["answer"]
+    assert len(reply_line["reply"]["citations"]) == 1
+
+
+def test_a_stream_to_an_unknown_npc_fails_before_it_starts(
+    client: TestClient, llm: RecordingLlm
+) -> None:
+    response = post_stream(client, npc_id="hidden")
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "npc_not_found"
+    assert llm.calls == []
+
+
+def test_a_stream_without_an_index_fails_before_it_starts(
+    client: TestClient, llm: RecordingLlm
+) -> None:
+    app.dependency_overrides[get_indexes] = lambda: {}
+
+    response = post_stream(client)
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": {"code": "knowledge_not_ready", "message": KNOWLEDGE_NOT_READY_MESSAGE}
+    }
+    assert llm.calls == []
+
+
+def test_a_stream_checks_the_request_like_the_normal_route(client: TestClient) -> None:
+    response = client.post(
+        "/api/chat/stream",
+        json={"npc_id": "first", "message": "   "},
+        headers=VISITOR_HEADERS,
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_request"
