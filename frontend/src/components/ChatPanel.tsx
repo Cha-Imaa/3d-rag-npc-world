@@ -297,8 +297,10 @@ export function ChatPanel({
         {isWaitingForReply && answerSoFar === '' && (
           <p className="chat-panel-note">{npc.display_name} is thinking…</p>
         )}
+        {/* Hidden from screen readers, which would read out every piece. The finished reply
+            joins the list once, so it is announced once. */}
         {isWaitingForReply && answerSoFar !== '' && (
-          <div className="chat-message chat-message-npc">
+          <div className="chat-message chat-message-npc" aria-hidden="true">
             <span className="chat-message-speaker">{npc.display_name}</span>
             <p>{answerSoFar}</p>
           </div>

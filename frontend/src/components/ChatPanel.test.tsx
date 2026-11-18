@@ -628,6 +628,21 @@ describe('ChatPanel', () => {
       expect(screen.getByText('Almanac, page 2')).toBeTruthy()
     })
 
+    it('hides the growing answer from screen readers, but not the finished reply', async () => {
+      const stream = streamPiecesThenWait(['The well ', 'is forty'])
+      const { messageBox, sendButton } = await renderPanel()
+      typeMessage(messageBox, 'How deep is the well?')
+      fireEvent.click(sendButton)
+
+      const growingAnswer = await screen.findByText('The well is forty')
+      expect(growingAnswer.closest('[aria-hidden="true"]')).not.toBeNull()
+
+      stream.finish({ answer: 'The well is forty feet deep.', citations: [], referral: null })
+
+      const finishedReply = await screen.findByText('The well is forty feet deep.')
+      expect(finishedReply.closest('[aria-hidden="true"]')).toBeNull()
+    })
+
     it('keeps only the checked reply when it differs from the streamed text', async () => {
       const stream = streamPiecesThenWait(['An unchecked claim'])
       const { messageBox, sendButton } = await renderPanel()
