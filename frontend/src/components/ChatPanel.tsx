@@ -183,6 +183,8 @@ export function ChatPanel({
     messageBoxRef.current?.focus()
 
     try {
+      // Closing the panel does not cancel this, on purpose: the server saves the reply only
+      // after sending the whole answer, so reading on lets it show when the chat reopens.
       const reply = await streamChatMessage(npc.id, visitorMessage, (text) =>
         setAnswerSoFar((currentAnswer) => currentAnswer + text),
       )
