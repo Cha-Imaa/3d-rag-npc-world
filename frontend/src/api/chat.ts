@@ -100,24 +100,6 @@ async function requestAsVisitor(path: string, options: RequestInit = {}): Promis
   return response
 }
 
-/**
- * Send the visitor's message to an NPC.
- *
- * @param npcId the NPC being talked to.
- * @param message the visitor's message.
- * @returns the NPC's reply.
- * @throws ChatError if no reply came back, so a failure can never look like an answer.
- */
-export async function sendChatMessage(npcId: string, message: string): Promise<ChatReply> {
-  const response = await requestAsVisitor('/api/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ npc_id: npcId, message }),
-  })
-
-  return response.json()
-}
-
 /** One line of POST /api/chat/stream. ARCHITECTURE.md describes each type. */
 type StreamLine =
   | { type: 'answer_text'; text: string }
