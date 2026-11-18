@@ -80,6 +80,8 @@ export function ChatPanel({
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [draft, setDraft] = useState('')
   const [isWaitingForReply, setIsWaitingForReply] = useState(false)
+  // The answer so far, while the NPC is still writing it. Empty when nothing has arrived yet.
+  const [answerSoFar, setAnswerSoFar] = useState('')
   const [failedSend, setFailedSend] = useState<FailedSend | null>(null)
   const [isLoadingHistory, setIsLoadingHistory] = useState(true)
   const [historyFailed, setHistoryFailed] = useState(false)
@@ -181,13 +183,17 @@ export function ChatPanel({
     messageBoxRef.current?.focus()
 
     try {
-      // The pieces of the answer are not shown yet; the checked reply is.
-      const reply = await streamChatMessage(npc.id, visitorMessage, () => {})
+      const reply = await streamChatMessage(npc.id, visitorMessage, (text) =>
+        setAnswerSoFar((currentAnswer) => currentAnswer + text),
+      )
+      // The checked reply replaces the pieces, so what stays on screen is what was saved.
       addMessage('npc', reply.answer, reply.citations, reply.referral)
     } catch (error) {
       const reason = error instanceof ChatError ? error.message : FALLBACK_ERROR_MESSAGE
       setFailedSend({ message: visitorMessage, reason })
     } finally {
+      // Drop any half-written answer, so a retry starts from nothing instead of old text.
+      setAnswerSoFar('')
       setIsWaitingForReply(false)
 
       // A closed panel already finished its reply. Finishing again could end the thinking
@@ -287,7 +293,16 @@ export function ChatPanel({
           )
         })}
 
-        {isWaitingForReply && <p className="chat-panel-note">{npc.display_name} is thinking…</p>}
+        {/* The thinking note waits for the first words, which then grow in its place. */}
+        {isWaitingForReply && answerSoFar === '' && (
+          <p className="chat-panel-note">{npc.display_name} is thinking…</p>
+        )}
+        {isWaitingForReply && answerSoFar !== '' && (
+          <div className="chat-message chat-message-npc">
+            <span className="chat-message-speaker">{npc.display_name}</span>
+            <p>{answerSoFar}</p>
+          </div>
+        )}
       </div>
 
       {/* Retrying leaves the draft alone, so a half-written next message is not lost. */}

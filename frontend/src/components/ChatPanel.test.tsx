@@ -563,6 +563,115 @@ describe('ChatPanel', () => {
     expect(messageBox.value).toBe('Half-written next message')
   })
 
+  describe('streaming answers', () => {
+    /**
+     * Make the next reply send the given pieces of its answer, then wait for the test.
+     * Input: the pieces, in order. Output: functions that end the stream with the checked
+     * reply, or with a failure.
+     */
+    function streamPiecesThenWait(pieces: string[]) {
+      let deliverReply: (reply: ChatReply) => void = () => {}
+      let failReply: (error: Error) => void = () => {}
+      streamChatMessageMock.mockImplementationOnce(async (_npcId, _message, onAnswerText) => {
+        for (const piece of pieces) {
+          onAnswerText(piece)
+        }
+        return new Promise((resolve, reject) => {
+          deliverReply = resolve
+          failReply = reject
+        })
+      })
+
+      return {
+        finish: (reply: ChatReply) => deliverReply(reply),
+        fail: (error: Error) => failReply(error),
+      }
+    }
+
+    it('shows the answer growing in place of the thinking note, and blocks sending', async () => {
+      streamPiecesThenWait(['The well ', 'is forty'])
+      const { messageBox, sendButton } = await renderPanel()
+
+      typeMessage(messageBox, 'How deep is the well?')
+      fireEvent.click(sendButton)
+
+      expect(await screen.findByText('The well is forty')).toBeTruthy()
+      expect(screen.queryByText('Test NPC is thinking…')).toBeNull()
+      typeMessage(messageBox, 'Next question')
+      expect(sendButton.disabled).toBe(true)
+    })
+
+    it('swaps in the checked reply, with its sources, once the answer is done', async () => {
+      const stream = streamPiecesThenWait(['The well ', 'is forty'])
+      const { messageBox, sendButton } = await renderPanel()
+      typeMessage(messageBox, 'How deep is the well?')
+      fireEvent.click(sendButton)
+      await screen.findByText('The well is forty')
+
+      stream.finish({
+        answer: 'The well is forty feet deep.',
+        citations: [
+          {
+            id: 'almanac.pdf#2',
+            title: 'Almanac',
+            source_file: 'almanac.pdf',
+            page: 2,
+            section: null,
+            text: 'The old well is forty feet deep.',
+          },
+        ],
+        referral: null,
+      })
+
+      expect(await screen.findByText('The well is forty feet deep.')).toBeTruthy()
+      expect(screen.queryByText('The well is forty')).toBeNull()
+      expect(screen.getByText('Almanac, page 2')).toBeTruthy()
+    })
+
+    it('keeps only the checked reply when it differs from the streamed text', async () => {
+      const stream = streamPiecesThenWait(['An unchecked claim'])
+      const { messageBox, sendButton } = await renderPanel()
+      typeMessage(messageBox, 'Hello')
+      fireEvent.click(sendButton)
+      await screen.findByText('An unchecked claim')
+
+      stream.finish({ answer: 'I have no record of that.', citations: [], referral: null })
+
+      expect(await screen.findByText('I have no record of that.')).toBeTruthy()
+      expect(screen.queryByText('An unchecked claim')).toBeNull()
+    })
+
+    it('removes the half-written answer when the reply fails part way', async () => {
+      const stream = streamPiecesThenWait(['The well ', 'is'])
+      const { messageBox, sendButton } = await renderPanel()
+      typeMessage(messageBox, 'How deep is the well?')
+      fireEvent.click(sendButton)
+      await screen.findByText('The well is')
+
+      stream.fail(new ChatError('llm_unavailable', 'Unavailable.'))
+
+      expect((await screen.findByRole('alert')).textContent).toBe('Unavailable.')
+      expect(screen.queryByText('The well is')).toBeNull()
+      expect(screen.queryByText('Test NPC', { selector: '.chat-message-speaker' })).toBeNull()
+      expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy()
+    })
+
+    it('starts a retry from nothing, without the failed half-written answer', async () => {
+      const stream = streamPiecesThenWait(['The well ', 'is'])
+      const { messageBox, sendButton } = await renderPanel()
+      typeMessage(messageBox, 'How deep is the well?')
+      fireEvent.click(sendButton)
+      await screen.findByText('The well is')
+      stream.fail(new ChatError('llm_unavailable', 'Unavailable.'))
+
+      streamChatMessageMock.mockReturnValueOnce(new Promise(() => {}))
+      fireEvent.click(await screen.findByRole('button', { name: 'Try again' }))
+
+      expect(screen.getByText('Test NPC is thinking…')).toBeTruthy()
+      expect(screen.queryByText('The well is')).toBeNull()
+    })
+  })
+
   describe('clearing conversations', () => {
     const SAVED_EXCHANGE: SavedMessage[] = [
       { role: 'visitor', content: 'Earlier question', citations: [], referral: null },
