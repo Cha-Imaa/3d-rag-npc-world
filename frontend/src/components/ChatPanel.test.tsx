@@ -357,6 +357,36 @@ describe('ChatPanel', () => {
     expect(useVillageStore.getState().replyingNpcId).toBe(NPC.id)
   })
 
+  it('keeps reading a reply after the panel closes, so it shows when the chat reopens', async () => {
+    let finishFirstReply: () => void = () => {}
+    streamChatMessageMock.mockImplementationOnce(async (_npcId, _message, onAnswerText) => {
+      onAnswerText('A late ')
+      return new Promise((resolve) => {
+        finishFirstReply = () => {
+          onAnswerText('reply.')
+          resolve({ answer: 'A late reply.', citations: [], referral: null })
+        }
+      })
+    })
+    const firstPanel = await renderPanel()
+    typeMessage(firstPanel.messageBox, 'Hello')
+    fireEvent.click(firstPanel.sendButton)
+    cleanup()
+
+    // No way to cancel is passed, so the stream runs to the end and the server saves it.
+    expect(streamChatMessageMock.mock.calls[0]).toHaveLength(3)
+    await act(async () => finishFirstReply())
+
+    // Reopening loads the saved conversation, which now holds the late reply.
+    loadConversationMock.mockResolvedValue([
+      { role: 'visitor', content: 'Hello', citations: [], referral: null },
+      { role: 'npc', content: 'A late reply.', citations: [], referral: null },
+    ])
+    await renderPanel()
+
+    expect(screen.getByText('A late reply.')).toBeTruthy()
+  })
+
   it('stops showing the NPC as thinking when the reply fails', async () => {
     streamChatMessageMock.mockRejectedValue(new ChatError('llm_unavailable', 'Unavailable.'))
     const { messageBox, sendButton } = await renderPanel()
