@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ChatError,
@@ -641,6 +641,28 @@ describe('ChatPanel', () => {
 
       const finishedReply = await screen.findByText('The well is forty feet deep.')
       expect(finishedReply.closest('[aria-hidden="true"]')).toBeNull()
+    })
+
+    it('scrolls to the bottom each time the answer grows', async () => {
+      let sendPiece: (text: string) => void = () => {}
+      streamChatMessageMock.mockImplementationOnce((_npcId, _message, onAnswerText) => {
+        sendPiece = onAnswerText
+        return new Promise(() => {})
+      })
+      const { messageBox, sendButton } = await renderPanel()
+      typeMessage(messageBox, 'How deep is the well?')
+      fireEvent.click(sendButton)
+      act(() => sendPiece('The well '))
+
+      // The test page has no layout, so pretend the list is tall and record each scroll.
+      const messageList = screen.getByRole('log')
+      const setScrollTop = vi.fn()
+      Object.defineProperty(messageList, 'scrollHeight', { value: 500, configurable: true })
+      Object.defineProperty(messageList, 'scrollTop', { set: setScrollTop, configurable: true })
+      act(() => sendPiece('is forty'))
+
+      expect(screen.getByText('The well is forty')).toBeTruthy()
+      expect(setScrollTop).toHaveBeenCalledWith(500)
     })
 
     it('keeps only the checked reply when it differs from the streamed text', async () => {

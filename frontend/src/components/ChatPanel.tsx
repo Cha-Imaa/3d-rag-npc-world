@@ -142,14 +142,14 @@ export function ChatPanel({
     }
   }, [npc.id, finishReplying])
 
-  // Keep the newest message and the thinking note in view.
+  // Keep the newest message, the thinking note, and the growing answer in view.
   useEffect(() => {
     const messageList = messageListRef.current
 
     if (messageList) {
       messageList.scrollTop = messageList.scrollHeight
     }
-  }, [messages, isWaitingForReply])
+  }, [messages, isWaitingForReply, answerSoFar])
 
   /**
    * Find the NPC a referral suggests, among the NPCs in the village.
