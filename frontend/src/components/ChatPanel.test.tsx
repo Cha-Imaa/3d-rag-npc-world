@@ -4,7 +4,7 @@ import {
   ChatError,
   clearConversations,
   loadConversation,
-  sendChatMessage,
+  streamChatMessage,
   type ChatReply,
   type SavedMessage,
 } from '../api/chat'
@@ -15,7 +15,7 @@ import { ChatPanel } from './ChatPanel'
 // Keep the real ChatError, so the panel can recognise it, and pretend only the network calls.
 vi.mock('../api/chat', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api/chat')>()),
-  sendChatMessage: vi.fn(),
+  streamChatMessage: vi.fn(),
   loadConversation: vi.fn(),
   clearConversations: vi.fn(),
 }))
@@ -29,7 +29,7 @@ const SECOND_NPC: Npc = {
 /** Every NPC in the village, so a referral can name its target. */
 const NPCS = [NPC, SECOND_NPC]
 
-const sendChatMessageMock = vi.mocked(sendChatMessage)
+const streamChatMessageMock = vi.mocked(streamChatMessage)
 const loadConversationMock = vi.mocked(loadConversation)
 const clearConversationsMock = vi.mocked(clearConversations)
 
@@ -52,8 +52,8 @@ function typeMessage(messageBox: HTMLTextAreaElement, text: string) {
 }
 
 beforeEach(() => {
-  sendChatMessageMock.mockReset()
-  sendChatMessageMock.mockResolvedValue({ answer: 'A reply.', citations: [], referral: null })
+  streamChatMessageMock.mockReset()
+  streamChatMessageMock.mockResolvedValue({ answer: 'A reply.', citations: [], referral: null })
   loadConversationMock.mockReset()
   loadConversationMock.mockResolvedValue([])
   clearConversationsMock.mockReset()
@@ -180,7 +180,7 @@ describe('ChatPanel', () => {
     fireEvent.keyDown(messageBox, { key: 'Enter' })
 
     expect(sendButton.disabled).toBe(true)
-    expect(sendChatMessageMock).not.toHaveBeenCalled()
+    expect(streamChatMessageMock).not.toHaveBeenCalled()
     expect(messageBox.value).toBe('Hello')
 
     deliverSavedMessages([])
@@ -226,14 +226,18 @@ describe('ChatPanel', () => {
     fireEvent.click(sendButton)
 
     expect(await screen.findByText('A reply.')).toBeTruthy()
-    expect(sendChatMessageMock).toHaveBeenCalledExactlyOnceWith('test-npc', 'Hello there')
+    expect(streamChatMessageMock).toHaveBeenCalledExactlyOnceWith(
+      'test-npc',
+      'Hello there',
+      expect.any(Function),
+    )
     expect(screen.getByText('Hello there')).toBeTruthy()
     expect(screen.queryByText('No messages yet.')).toBeNull()
     expect(messageBox.value).toBe('')
   })
 
   it("lists an answer's sources, each opening to show its passage", async () => {
-    sendChatMessageMock.mockResolvedValue({
+    streamChatMessageMock.mockResolvedValue({
       answer: 'The well is forty feet deep.',
       citations: [
         {
@@ -278,7 +282,7 @@ describe('ChatPanel', () => {
 
   it('shows the thinking note and blocks sending until the reply arrives', async () => {
     let deliverReply: (reply: ChatReply) => void = () => {}
-    sendChatMessageMock.mockReturnValue(
+    streamChatMessageMock.mockReturnValue(
       new Promise((resolve) => {
         deliverReply = resolve
       }),
@@ -292,7 +296,7 @@ describe('ChatPanel', () => {
 
     expect(screen.getByText('Test NPC is thinking…')).toBeTruthy()
     expect(sendButton.disabled).toBe(true)
-    expect(sendChatMessageMock).toHaveBeenCalledOnce()
+    expect(streamChatMessageMock).toHaveBeenCalledOnce()
 
     deliverReply({ answer: 'A late reply.', citations: [], referral: null })
 
@@ -302,7 +306,7 @@ describe('ChatPanel', () => {
 
   it('tells the village the NPC is thinking until the reply arrives', async () => {
     let deliverReply: (reply: ChatReply) => void = () => {}
-    sendChatMessageMock.mockReturnValue(
+    streamChatMessageMock.mockReturnValue(
       new Promise((resolve) => {
         deliverReply = resolve
       }),
@@ -319,7 +323,7 @@ describe('ChatPanel', () => {
   })
 
   it('stops showing the NPC as thinking when the panel closes mid-reply', async () => {
-    sendChatMessageMock.mockReturnValue(new Promise(() => {}))
+    streamChatMessageMock.mockReturnValue(new Promise(() => {}))
     const { messageBox, sendButton } = await renderPanel()
 
     typeMessage(messageBox, 'Hello')
@@ -331,7 +335,7 @@ describe('ChatPanel', () => {
 
   it("does not let a closed panel's late reply end a new chat's thinking", async () => {
     let deliverFirstReply: (reply: ChatReply) => void = () => {}
-    sendChatMessageMock.mockReturnValueOnce(
+    streamChatMessageMock.mockReturnValueOnce(
       new Promise((resolve) => {
         deliverFirstReply = resolve
       }),
@@ -342,19 +346,19 @@ describe('ChatPanel', () => {
     cleanup()
 
     // The visitor reopens the same NPC and asks again before the first reply arrives.
-    sendChatMessageMock.mockReturnValueOnce(new Promise(() => {}))
+    streamChatMessageMock.mockReturnValueOnce(new Promise(() => {}))
     const secondPanel = await renderPanel()
     typeMessage(secondPanel.messageBox, 'Hello again')
     fireEvent.click(secondPanel.sendButton)
     deliverFirstReply({ answer: 'A late reply.', citations: [], referral: null })
 
-    await waitFor(() => expect(sendChatMessageMock).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(streamChatMessageMock).toHaveBeenCalledTimes(2))
     await Promise.resolve()
     expect(useVillageStore.getState().replyingNpcId).toBe(NPC.id)
   })
 
   it('stops showing the NPC as thinking when the reply fails', async () => {
-    sendChatMessageMock.mockRejectedValue(new ChatError('llm_unavailable', 'Unavailable.'))
+    streamChatMessageMock.mockRejectedValue(new ChatError('llm_unavailable', 'Unavailable.'))
     const { messageBox, sendButton } = await renderPanel()
 
     typeMessage(messageBox, 'Hello')
@@ -380,11 +384,11 @@ describe('ChatPanel', () => {
 
     typeMessage(messageBox, 'Hello')
     fireEvent.keyDown(messageBox, { key: 'Enter', shiftKey: true })
-    expect(sendChatMessageMock).not.toHaveBeenCalled()
+    expect(streamChatMessageMock).not.toHaveBeenCalled()
 
     fireEvent.keyDown(messageBox, { key: 'Enter' })
     expect(await screen.findByText('A reply.')).toBeTruthy()
-    expect(sendChatMessageMock).toHaveBeenCalledOnce()
+    expect(streamChatMessageMock).toHaveBeenCalledOnce()
   })
 
   it('does not send a blank message', async () => {
@@ -396,7 +400,7 @@ describe('ChatPanel', () => {
     fireEvent.keyDown(messageBox, { key: 'Enter' })
 
     expect(sendButton.disabled).toBe(true)
-    expect(sendChatMessageMock).not.toHaveBeenCalled()
+    expect(streamChatMessageMock).not.toHaveBeenCalled()
   })
 
   it('stops a message over the limit and says why', async () => {
@@ -407,7 +411,7 @@ describe('ChatPanel', () => {
 
     expect(sendButton.disabled).toBe(true)
     expect(screen.getByText('Messages can be up to 2,000 characters.')).toBeTruthy()
-    expect(sendChatMessageMock).not.toHaveBeenCalled()
+    expect(streamChatMessageMock).not.toHaveBeenCalled()
   })
 
   it('allows a message exactly at the limit, counting an emoji as one character', async () => {
@@ -420,7 +424,7 @@ describe('ChatPanel', () => {
   })
 
   it('shows the plain reason for a failure, and no reply', async () => {
-    sendChatMessageMock.mockRejectedValue(new ChatError('llm_out_of_credit', 'Out of credit.'))
+    streamChatMessageMock.mockRejectedValue(new ChatError('llm_out_of_credit', 'Out of credit.'))
     const { messageBox, sendButton } = await renderPanel()
 
     typeMessage(messageBox, 'Hello')
@@ -433,7 +437,7 @@ describe('ChatPanel', () => {
   })
 
   it('still reports a failure that is not a ChatError', async () => {
-    sendChatMessageMock.mockRejectedValue(new SyntaxError('Unexpected token'))
+    streamChatMessageMock.mockRejectedValue(new SyntaxError('Unexpected token'))
     const { messageBox, sendButton } = await renderPanel()
 
     typeMessage(messageBox, 'Hello')
@@ -444,7 +448,7 @@ describe('ChatPanel', () => {
   })
 
   it('clears an old failure once the next message gets a reply', async () => {
-    sendChatMessageMock.mockRejectedValueOnce(new ChatError('llm_timeout', 'Too slow.'))
+    streamChatMessageMock.mockRejectedValueOnce(new ChatError('llm_timeout', 'Too slow.'))
     const { messageBox, sendButton } = await renderPanel()
 
     typeMessage(messageBox, 'First')
@@ -472,7 +476,9 @@ describe('ChatPanel', () => {
   })
 
   it('retries when credit has run out, without repeating the message', async () => {
-    sendChatMessageMock.mockRejectedValueOnce(new ChatError('llm_out_of_credit', 'Out of credit.'))
+    streamChatMessageMock.mockRejectedValueOnce(
+      new ChatError('llm_out_of_credit', 'Out of credit.'),
+    )
     const { messageBox, sendButton } = await renderPanel()
 
     typeMessage(messageBox, 'Hello')
@@ -480,16 +486,20 @@ describe('ChatPanel', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Try again' }))
 
     expect(await screen.findByText('A reply.')).toBeTruthy()
-    expect(sendChatMessageMock).toHaveBeenCalledTimes(2)
-    expect(sendChatMessageMock).toHaveBeenLastCalledWith('test-npc', 'Hello')
+    expect(streamChatMessageMock).toHaveBeenCalledTimes(2)
+    expect(streamChatMessageMock).toHaveBeenLastCalledWith(
+      'test-npc',
+      'Hello',
+      expect.any(Function),
+    )
     expect(screen.getAllByText('Hello')).toHaveLength(1)
     expect(screen.queryByRole('alert')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
   })
 
   it('offers the retry again when a retry fails too', async () => {
-    sendChatMessageMock.mockRejectedValueOnce(new ChatError('llm_unavailable', 'First failure.'))
-    sendChatMessageMock.mockRejectedValueOnce(new ChatError('llm_unavailable', 'Second failure.'))
+    streamChatMessageMock.mockRejectedValueOnce(new ChatError('llm_unavailable', 'First failure.'))
+    streamChatMessageMock.mockRejectedValueOnce(new ChatError('llm_unavailable', 'Second failure.'))
     const { messageBox, sendButton } = await renderPanel()
 
     typeMessage(messageBox, 'Hello')
@@ -501,12 +511,12 @@ describe('ChatPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
 
     expect(await screen.findByText('A reply.')).toBeTruthy()
-    expect(sendChatMessageMock).toHaveBeenCalledTimes(3)
+    expect(streamChatMessageMock).toHaveBeenCalledTimes(3)
     expect(screen.getAllByText('Hello')).toHaveLength(1)
   })
 
   it('shows the thinking note in place of the failure while retrying', async () => {
-    sendChatMessageMock.mockRejectedValueOnce(new ChatError('llm_unavailable', 'Failed.'))
+    streamChatMessageMock.mockRejectedValueOnce(new ChatError('llm_unavailable', 'Failed.'))
     const { messageBox, sendButton } = await renderPanel()
 
     typeMessage(messageBox, 'Hello')
@@ -514,7 +524,7 @@ describe('ChatPanel', () => {
     const retryButton = await screen.findByRole<HTMLButtonElement>('button', { name: 'Try again' })
 
     let deliverReply: (reply: ChatReply) => void = () => {}
-    sendChatMessageMock.mockReturnValue(
+    streamChatMessageMock.mockReturnValue(
       new Promise((resolve) => {
         deliverReply = resolve
       }),
@@ -534,7 +544,7 @@ describe('ChatPanel', () => {
   })
 
   it('retries the failed message and keeps a new draft in the box', async () => {
-    sendChatMessageMock.mockRejectedValueOnce(new ChatError('llm_unavailable', 'Failed.'))
+    streamChatMessageMock.mockRejectedValueOnce(new ChatError('llm_unavailable', 'Failed.'))
     const { messageBox, sendButton } = await renderPanel()
 
     typeMessage(messageBox, 'First')
@@ -545,7 +555,11 @@ describe('ChatPanel', () => {
     fireEvent.click(retryButton)
 
     expect(await screen.findByText('A reply.')).toBeTruthy()
-    expect(sendChatMessageMock).toHaveBeenLastCalledWith('test-npc', 'First')
+    expect(streamChatMessageMock).toHaveBeenLastCalledWith(
+      'test-npc',
+      'First',
+      expect.any(Function),
+    )
     expect(messageBox.value).toBe('Half-written next message')
   })
 
@@ -581,7 +595,7 @@ describe('ChatPanel', () => {
     })
 
     it('removes an old failure and its retry, which belonged to the cleared chat', async () => {
-      sendChatMessageMock.mockRejectedValue(new ChatError('llm_timeout', 'Too slow.'))
+      streamChatMessageMock.mockRejectedValue(new ChatError('llm_timeout', 'Too slow.'))
       const { messageBox, sendButton } = await renderPanel()
       typeMessage(messageBox, 'Hello')
       fireEvent.click(sendButton)
@@ -595,7 +609,7 @@ describe('ChatPanel', () => {
     })
 
     it('cannot clear while a reply is on its way, which the server saves afterwards', async () => {
-      sendChatMessageMock.mockReturnValue(new Promise(() => {}))
+      streamChatMessageMock.mockReturnValue(new Promise(() => {}))
       const { messageBox, sendButton } = await renderPanel()
 
       typeMessage(messageBox, 'Hello')
@@ -616,7 +630,7 @@ describe('ChatPanel', () => {
       fireEvent.keyDown(messageBox, { key: 'Enter' })
 
       expect(sendButton.disabled).toBe(true)
-      expect(sendChatMessageMock).not.toHaveBeenCalled()
+      expect(streamChatMessageMock).not.toHaveBeenCalled()
       expect(messageBox.value).toBe('Hello')
     })
   })
@@ -625,7 +639,7 @@ describe('ChatPanel', () => {
     const REFERRAL = { npc_id: SECOND_NPC.id, reason: 'They keep the boat records.' }
 
     it('shows a referral card under the reply that suggests another NPC', async () => {
-      sendChatMessageMock.mockResolvedValue({
+      streamChatMessageMock.mockResolvedValue({
         answer: 'My records do not cover boats.',
         citations: [],
         referral: REFERRAL,
@@ -664,7 +678,7 @@ describe('ChatPanel', () => {
       fireEvent.click(goButton)
 
       expect(onFollowReferral).toHaveBeenCalledExactlyOnceWith(SECOND_NPC.id)
-      expect(sendChatMessageMock).not.toHaveBeenCalled()
+      expect(streamChatMessageMock).not.toHaveBeenCalled()
     })
 
     it('hides a referral to an NPC that is no longer in the village', async () => {

@@ -3,7 +3,7 @@ import {
   ChatError,
   clearConversations,
   loadConversation,
-  sendChatMessage,
+  streamChatMessage,
   type Citation,
   type Referral,
   type SavedMessage,
@@ -181,7 +181,8 @@ export function ChatPanel({
     messageBoxRef.current?.focus()
 
     try {
-      const reply = await sendChatMessage(npc.id, visitorMessage)
+      // The pieces of the answer are not shown yet; the checked reply is.
+      const reply = await streamChatMessage(npc.id, visitorMessage, () => {})
       addMessage('npc', reply.answer, reply.citations, reply.referral)
     } catch (error) {
       const reason = error instanceof ChatError ? error.message : FALLBACK_ERROR_MESSAGE
