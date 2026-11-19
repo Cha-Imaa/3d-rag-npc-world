@@ -37,6 +37,14 @@ export function findPendingReply(npcId: string): PendingReply | null {
   return pendingRepliesByNpc.get(npcId) ?? null
 }
 
+/**
+ * Wait until every reply on its way has settled, however each one ended.
+ * Output: a promise that resolves once none is left from when it was called.
+ */
+export async function waitForAllPendingReplies(): Promise<void> {
+  await Promise.all(pendingRepliesByNpc.values())
+}
+
 /** Forget every reply. Tests use this, since some leave a reply unfinished on purpose. */
 export function forgetAllPendingReplies(): void {
   pendingRepliesByNpc.clear()

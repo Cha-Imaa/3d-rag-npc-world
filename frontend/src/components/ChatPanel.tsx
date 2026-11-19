@@ -13,7 +13,12 @@ import type { Npc } from '../api/npcs'
 import { useVillageStore } from '../store'
 import { CitationList } from './CitationList'
 import { ClearConversationsControl } from './ClearConversationsControl'
-import { findPendingReply, rememberPendingReply, type FailedReply } from './pendingReplies'
+import {
+  findPendingReply,
+  rememberPendingReply,
+  waitForAllPendingReplies,
+  type FailedReply,
+} from './pendingReplies'
 import { ReferralCard } from './ReferralCard'
 
 /** The server refuses longer messages, so the panel stops them before sending. */
@@ -277,6 +282,9 @@ export function ChatPanel({
     setIsClearing(true)
 
     try {
+      // A reply from a chat closed mid-reply would be saved after the clear and bring its
+      // conversation back, so let every unfinished reply settle first.
+      await waitForAllPendingReplies()
       await clearConversations()
       setMessages([])
       // A failed message or a failed load belongs to the conversation that is now gone.

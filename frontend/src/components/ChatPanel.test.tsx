@@ -893,6 +893,36 @@ describe('ChatPanel', () => {
       expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
     })
 
+    it("waits for a closed chat's unfinished reply before clearing", async () => {
+      let deliverFirstReply: (reply: ChatReply) => void = () => {}
+      streamChatMessageMock.mockReturnValueOnce(
+        new Promise((resolve) => {
+          deliverFirstReply = resolve
+        }),
+      )
+      const firstPanel = await renderPanel()
+      typeMessage(firstPanel.messageBox, 'Hello')
+      fireEvent.click(firstPanel.sendButton)
+      cleanup()
+
+      // The visitor walks to another NPC and clears before the first reply arrives.
+      render(
+        <ChatPanel npc={SECOND_NPC} npcs={NPCS} onFollowReferral={vi.fn()} onClose={vi.fn()} />,
+      )
+      await waitFor(() => expect(screen.queryByText(LOADING_NOTE)).toBeNull())
+      clearAndConfirm()
+
+      expect(screen.getByText('Clearing…')).toBeTruthy()
+      await Promise.resolve()
+      expect(clearConversationsMock).not.toHaveBeenCalled()
+
+      await act(async () =>
+        deliverFirstReply({ answer: 'A late reply.', citations: [], referral: null }),
+      )
+      expect(await screen.findByText('Your conversations were cleared.')).toBeTruthy()
+      expect(clearConversationsMock).toHaveBeenCalledOnce()
+    })
+
     it('cannot clear while a reply is on its way, which the server saves afterwards', async () => {
       streamChatMessageMock.mockReturnValue(new Promise(() => {}))
       const { messageBox, sendButton } = await renderPanel()

@@ -3,6 +3,7 @@ import {
   findPendingReply,
   forgetAllPendingReplies,
   rememberPendingReply,
+  waitForAllPendingReplies,
   type FailedReply,
 } from './pendingReplies'
 
@@ -68,6 +69,29 @@ describe('pending replies', () => {
     await letRepliesSettle()
 
     expect(findPendingReply('npc-a')).toBe(newer.reply)
+  })
+
+  it('waits for every reply to settle, however it ended', async () => {
+    const first = makeControlledReply()
+    const second = makeControlledReply()
+    rememberPendingReply('npc-a', first.reply)
+    rememberPendingReply('npc-b', second.reply)
+    let isDone = false
+
+    const waiting = waitForAllPendingReplies().then(() => {
+      isDone = true
+    })
+    first.settle(null)
+    await letRepliesSettle()
+    expect(isDone).toBe(false)
+
+    second.settle({ message: 'Hello', reason: 'The model is unavailable.' })
+    await waiting
+    expect(isDone).toBe(true)
+  })
+
+  it('finishes waiting straight away when no reply is on its way', async () => {
+    await expect(waitForAllPendingReplies()).resolves.toBeUndefined()
   })
 
   it('forgets every reply when asked', () => {
