@@ -129,15 +129,21 @@ export function ChatPanel({
     // A reply asked for before the chat was last closed, which may still be on its way.
     const unfinishedReply = findPendingReply(npc.id)
 
-    /** Wait for any unfinished reply, then show the saved messages, or say they failed. */
+    /**
+     * Wait for any unfinished reply, then show the saved messages, or say they failed.
+     * If that reply failed, show its message and reason after them.
+     */
     async function loadSavedMessages() {
+      // Set when the unfinished reply failed, so nothing was saved for it.
+      let earlierFailure: FailedReply | null = null
+
       // The server saves an exchange only once its reply is sent, so loading before then
       // would miss it. Meanwhile the panel and the village show the NPC as thinking,
       // and Send is off.
       if (unfinishedReply) {
         setIsWaitingForReply(true)
         startReplying(npc.id)
-        await unfinishedReply
+        earlierFailure = await unfinishedReply
 
         // A closed panel already stopped the thinking cue when it closed.
         if (!isPanelOpen) {
@@ -161,6 +167,17 @@ export function ChatPanel({
         if (isPanelOpen) {
           setIsLoadingHistory(false)
         }
+      }
+
+      // Show the failure as the panel would have if it had stayed open: the visitor's
+      // message, the reason, and Try again. Otherwise the message would vanish unexplained.
+      if (earlierFailure && isPanelOpen) {
+        const failedMessage = earlierFailure.message
+        setMessages((currentMessages) => [
+          ...currentMessages,
+          { speaker: 'visitor', text: failedMessage, citations: [], referral: null },
+        ])
+        setFailedSend(earlierFailure)
       }
     }
 

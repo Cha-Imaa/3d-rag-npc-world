@@ -419,6 +419,40 @@ describe('ChatPanel', () => {
     expect(useVillageStore.getState().replyingNpcId).toBeNull()
   })
 
+  it('shows the message, the reason, and Try again when the awaited reply fails', async () => {
+    let failFirstReply: (error: Error) => void = () => {}
+    streamChatMessageMock.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        failFirstReply = reject
+      }),
+    )
+    const firstPanel = await renderPanel()
+    typeMessage(firstPanel.messageBox, 'Hello')
+    fireEvent.click(firstPanel.sendButton)
+    cleanup()
+    render(<ChatPanel npc={NPC} npcs={NPCS} onFollowReferral={vi.fn()} onClose={vi.fn()} />)
+    await screen.findByText('Test NPC is thinking…')
+
+    // Nothing was saved for the failed message, so only the older exchange loads.
+    loadConversationMock.mockResolvedValue([
+      { role: 'visitor', content: 'An older question', citations: [], referral: null },
+      { role: 'npc', content: 'An older answer.', citations: [], referral: null },
+    ])
+    await act(async () => failFirstReply(new ChatError('llm_unavailable', 'Unavailable.')))
+
+    expect((await screen.findByRole('alert')).textContent).toBe('Unavailable.')
+    const shownTexts = Array.from(document.querySelectorAll('.chat-message p')).map(
+      (paragraph) => paragraph.textContent,
+    )
+    expect(shownTexts).toEqual(['An older question', 'An older answer.', 'Hello'])
+
+    // Trying again resends the failed message without adding it twice.
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(await screen.findByText('A reply.')).toBeTruthy()
+    expect(streamChatMessageMock).toHaveBeenLastCalledWith(NPC.id, 'Hello', expect.any(Function))
+    expect(screen.getAllByText('Hello')).toHaveLength(1)
+  })
+
   it('opens without waiting once an earlier reply has arrived', async () => {
     const firstPanel = await renderPanel()
     typeMessage(firstPanel.messageBox, 'Hello')
