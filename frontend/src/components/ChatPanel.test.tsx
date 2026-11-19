@@ -373,6 +373,52 @@ describe('ChatPanel', () => {
     expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Send' }).disabled).toBe(false)
   })
 
+  it('shows the village the NPC is thinking while a reopened chat waits', async () => {
+    let deliverFirstReply: (reply: ChatReply) => void = () => {}
+    streamChatMessageMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        deliverFirstReply = resolve
+      }),
+    )
+    const firstPanel = await renderPanel()
+    typeMessage(firstPanel.messageBox, 'Hello')
+    fireEvent.click(firstPanel.sendButton)
+    cleanup()
+    expect(useVillageStore.getState().replyingNpcId).toBeNull()
+
+    render(<ChatPanel npc={NPC} npcs={NPCS} onFollowReferral={vi.fn()} onClose={vi.fn()} />)
+
+    await waitFor(() => expect(useVillageStore.getState().replyingNpcId).toBe(NPC.id))
+    await act(async () =>
+      deliverFirstReply({ answer: 'A late reply.', citations: [], referral: null }),
+    )
+    expect(useVillageStore.getState().replyingNpcId).toBeNull()
+  })
+
+  it('stops the thinking cue when a reopened chat closes while it waits', async () => {
+    let deliverFirstReply: (reply: ChatReply) => void = () => {}
+    streamChatMessageMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        deliverFirstReply = resolve
+      }),
+    )
+    const firstPanel = await renderPanel()
+    typeMessage(firstPanel.messageBox, 'Hello')
+    fireEvent.click(firstPanel.sendButton)
+    cleanup()
+    render(<ChatPanel npc={NPC} npcs={NPCS} onFollowReferral={vi.fn()} onClose={vi.fn()} />)
+    await waitFor(() => expect(useVillageStore.getState().replyingNpcId).toBe(NPC.id))
+
+    cleanup()
+    expect(useVillageStore.getState().replyingNpcId).toBeNull()
+
+    // The reply arriving later leaves the village alone.
+    await act(async () =>
+      deliverFirstReply({ answer: 'A late reply.', citations: [], referral: null }),
+    )
+    expect(useVillageStore.getState().replyingNpcId).toBeNull()
+  })
+
   it('opens without waiting once an earlier reply has arrived', async () => {
     const firstPanel = await renderPanel()
     typeMessage(firstPanel.messageBox, 'Hello')

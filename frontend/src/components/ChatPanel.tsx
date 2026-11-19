@@ -132,15 +132,19 @@ export function ChatPanel({
     /** Wait for any unfinished reply, then show the saved messages, or say they failed. */
     async function loadSavedMessages() {
       // The server saves an exchange only once its reply is sent, so loading before then
-      // would miss it. Meanwhile the panel shows the NPC as thinking, with Send off.
+      // would miss it. Meanwhile the panel and the village show the NPC as thinking,
+      // and Send is off.
       if (unfinishedReply) {
         setIsWaitingForReply(true)
+        startReplying(npc.id)
         await unfinishedReply
 
+        // A closed panel already stopped the thinking cue when it closed.
         if (!isPanelOpen) {
           return
         }
         setIsWaitingForReply(false)
+        finishReplying(npc.id)
       }
 
       try {
@@ -165,7 +169,7 @@ export function ChatPanel({
     return () => {
       isPanelOpen = false
     }
-  }, [npc.id])
+  }, [npc.id, startReplying, finishReplying])
 
   // When the panel closes mid-reply, stop showing the NPC as thinking straight away,
   // instead of waiting for a reply nobody will see.
