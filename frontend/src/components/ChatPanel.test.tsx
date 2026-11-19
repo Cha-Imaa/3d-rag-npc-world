@@ -11,6 +11,7 @@ import {
 import type { Npc } from '../api/npcs'
 import { useVillageStore } from '../store'
 import { ChatPanel } from './ChatPanel'
+import { forgetAllPendingReplies } from './pendingReplies'
 
 // Keep the real ChatError, so the panel can recognise it, and pretend only the network calls.
 vi.mock('../api/chat', async (importOriginal) => ({
@@ -59,6 +60,8 @@ beforeEach(() => {
   clearConversationsMock.mockReset()
   clearConversationsMock.mockResolvedValue(undefined)
   useVillageStore.setState({ replyingNpcId: null })
+  // Some tests leave a reply unfinished on purpose, so the next test must not wait for it.
+  forgetAllPendingReplies()
 })
 
 /** Open the clear question and confirm it. */
@@ -333,7 +336,7 @@ describe('ChatPanel', () => {
     expect(useVillageStore.getState().replyingNpcId).toBeNull()
   })
 
-  it("does not let a closed panel's late reply end a new chat's thinking", async () => {
+  it('waits for an unfinished reply before loading, when the chat reopens', async () => {
     let deliverFirstReply: (reply: ChatReply) => void = () => {}
     streamChatMessageMock.mockReturnValueOnce(
       new Promise((resolve) => {
@@ -345,16 +348,42 @@ describe('ChatPanel', () => {
     fireEvent.click(firstPanel.sendButton)
     cleanup()
 
-    // The visitor reopens the same NPC and asks again before the first reply arrives.
-    streamChatMessageMock.mockReturnValueOnce(new Promise(() => {}))
-    const secondPanel = await renderPanel()
-    typeMessage(secondPanel.messageBox, 'Hello again')
-    fireEvent.click(secondPanel.sendButton)
-    deliverFirstReply({ answer: 'A late reply.', citations: [], referral: null })
+    // The visitor reopens the same NPC before the first reply arrives.
+    render(<ChatPanel npc={NPC} npcs={NPCS} onFollowReferral={vi.fn()} onClose={vi.fn()} />)
+    const messageBox = screen.getByLabelText<HTMLTextAreaElement>('Your message')
+    typeMessage(messageBox, 'Hello again')
 
-    await waitFor(() => expect(streamChatMessageMock).toHaveBeenCalledTimes(2))
-    await Promise.resolve()
-    expect(useVillageStore.getState().replyingNpcId).toBe(NPC.id)
+    expect(await screen.findByText('Test NPC is thinking…')).toBeTruthy()
+    expect(screen.queryByText(LOADING_NOTE)).toBeNull()
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Send' }).disabled).toBe(true)
+    // Loading now would miss the exchange, which the server saves once the reply is sent.
+    expect(loadConversationMock).toHaveBeenCalledTimes(1)
+
+    loadConversationMock.mockResolvedValue([
+      { role: 'visitor', content: 'Hello', citations: [], referral: null },
+      { role: 'npc', content: 'A late reply.', citations: [], referral: null },
+    ])
+    await act(async () =>
+      deliverFirstReply({ answer: 'A late reply.', citations: [], referral: null }),
+    )
+
+    expect(await screen.findByText('A late reply.')).toBeTruthy()
+    expect(loadConversationMock).toHaveBeenCalledTimes(2)
+    expect(screen.queryByText('Test NPC is thinking…')).toBeNull()
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Send' }).disabled).toBe(false)
+  })
+
+  it('opens without waiting once an earlier reply has arrived', async () => {
+    const firstPanel = await renderPanel()
+    typeMessage(firstPanel.messageBox, 'Hello')
+    fireEvent.click(firstPanel.sendButton)
+    await screen.findByText('A reply.')
+    cleanup()
+
+    await renderPanel()
+
+    expect(screen.queryByText('Test NPC is thinking…')).toBeNull()
+    expect(loadConversationMock).toHaveBeenCalledTimes(2)
   })
 
   it('keeps reading a reply after the panel closes, so it shows when the chat reopens', async () => {

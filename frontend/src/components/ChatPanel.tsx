@@ -4,6 +4,7 @@ import {
   clearConversations,
   loadConversation,
   streamChatMessage,
+  type ChatReply,
   type Citation,
   type Referral,
   type SavedMessage,
@@ -12,6 +13,7 @@ import type { Npc } from '../api/npcs'
 import { useVillageStore } from '../store'
 import { CitationList } from './CitationList'
 import { ClearConversationsControl } from './ClearConversationsControl'
+import { findPendingReply, rememberPendingReply, type FailedReply } from './pendingReplies'
 import { ReferralCard } from './ReferralCard'
 
 /** The server refuses longer messages, so the panel stops them before sending. */
@@ -33,10 +35,26 @@ type ChatMessage = {
   referral: Referral | null
 }
 
-/** A message that got no reply, and the plain reason to show the visitor. */
-type FailedSend = {
-  message: string
-  reason: string
+/** How asking for a reply ended: with the checked reply, or with the reason it failed. */
+type ReplyOutcome = { reply: ChatReply } | { failure: FailedReply }
+
+/**
+ * Ask an NPC to reply, and report how it ended instead of throwing.
+ * Input: the NPC's ID, the visitor's message, and what to run with each piece of the answer.
+ * Output: the checked reply, or the message that failed and the plain reason why.
+ */
+async function askForReply(
+  npcId: string,
+  visitorMessage: string,
+  onAnswerText: (text: string) => void,
+): Promise<ReplyOutcome> {
+  try {
+    const reply = await streamChatMessage(npcId, visitorMessage, onAnswerText)
+    return { reply }
+  } catch (error) {
+    const reason = error instanceof ChatError ? error.message : FALLBACK_ERROR_MESSAGE
+    return { failure: { message: visitorMessage, reason } }
+  }
 }
 
 /**
@@ -82,7 +100,7 @@ export function ChatPanel({
   const [isWaitingForReply, setIsWaitingForReply] = useState(false)
   // The answer so far, while the NPC is still writing it. Empty when nothing has arrived yet.
   const [answerSoFar, setAnswerSoFar] = useState('')
-  const [failedSend, setFailedSend] = useState<FailedSend | null>(null)
+  const [failedSend, setFailedSend] = useState<FailedReply | null>(null)
   const [isLoadingHistory, setIsLoadingHistory] = useState(true)
   const [historyFailed, setHistoryFailed] = useState(false)
   const [isClearing, setIsClearing] = useState(false)
@@ -108,23 +126,41 @@ export function ChatPanel({
   useEffect(() => {
     // Ignore a result that arrives after the panel closed, so it can't update a closed panel.
     let isPanelOpen = true
+    // A reply asked for before the chat was last closed, which may still be on its way.
+    const unfinishedReply = findPendingReply(npc.id)
 
-    loadConversation(npc.id)
-      .then((savedMessages) => {
+    /** Wait for any unfinished reply, then show the saved messages, or say they failed. */
+    async function loadSavedMessages() {
+      // The server saves an exchange only once its reply is sent, so loading before then
+      // would miss it. Meanwhile the panel shows the NPC as thinking, with Send off.
+      if (unfinishedReply) {
+        setIsWaitingForReply(true)
+        await unfinishedReply
+
+        if (!isPanelOpen) {
+          return
+        }
+        setIsWaitingForReply(false)
+      }
+
+      try {
+        const savedMessages = await loadConversation(npc.id)
+
         if (isPanelOpen) {
           setMessages(savedMessages.map(toPanelMessage))
         }
-      })
-      .catch(() => {
+      } catch {
         if (isPanelOpen) {
           setHistoryFailed(true)
         }
-      })
-      .finally(() => {
+      } finally {
         if (isPanelOpen) {
           setIsLoadingHistory(false)
         }
-      })
+      }
+    }
+
+    loadSavedMessages()
 
     return () => {
       isPanelOpen = false
@@ -182,27 +218,33 @@ export function ChatPanel({
     // so bring it back.
     messageBoxRef.current?.focus()
 
-    try {
-      // Closing the panel does not cancel this, on purpose: the server saves the reply only
-      // after sending the whole answer, so reading on lets it show when the chat reopens.
-      const reply = await streamChatMessage(npc.id, visitorMessage, (text) =>
-        setAnswerSoFar((currentAnswer) => currentAnswer + text),
-      )
-      // The checked reply replaces the pieces, so what stays on screen is what was saved.
-      addMessage('npc', reply.answer, reply.citations, reply.referral)
-    } catch (error) {
-      const reason = error instanceof ChatError ? error.message : FALLBACK_ERROR_MESSAGE
-      setFailedSend({ message: visitorMessage, reason })
-    } finally {
-      // Drop any half-written answer, so a retry starts from nothing instead of old text.
-      setAnswerSoFar('')
-      setIsWaitingForReply(false)
+    // Closing the panel does not cancel this, on purpose: the server saves the reply only
+    // after sending the whole answer, so reading on lets it show when the chat reopens.
+    const outcome = askForReply(npc.id, visitorMessage, (text) =>
+      setAnswerSoFar((currentAnswer) => currentAnswer + text),
+    )
+    // Remembered so a chat reopened before the reply settles can wait for it.
+    rememberPendingReply(
+      npc.id,
+      outcome.then((result) => ('failure' in result ? result.failure : null)),
+    )
+    const result = await outcome
 
-      // A closed panel already finished its reply. Finishing again could end the thinking
-      // of a new chat with the same NPC.
-      if (isPanelOpenRef.current) {
-        finishReplying(npc.id)
-      }
+    if ('failure' in result) {
+      setFailedSend(result.failure)
+    } else {
+      // The checked reply replaces the pieces, so what stays on screen is what was saved.
+      addMessage('npc', result.reply.answer, result.reply.citations, result.reply.referral)
+    }
+
+    // Drop any half-written answer, so a retry starts from nothing instead of old text.
+    setAnswerSoFar('')
+    setIsWaitingForReply(false)
+
+    // A closed panel already finished its reply. Finishing again could end the thinking
+    // of a new chat with the same NPC.
+    if (isPanelOpenRef.current) {
+      finishReplying(npc.id)
     }
   }
 
@@ -266,7 +308,10 @@ export function ChatPanel({
         aria-label="Messages"
         tabIndex={0}
       >
-        {isLoadingHistory && <p className="chat-panel-note">Loading earlier messages…</p>}
+        {/* While an unfinished reply is awaited, the thinking note says enough. */}
+        {isLoadingHistory && !isWaitingForReply && (
+          <p className="chat-panel-note">Loading earlier messages…</p>
+        )}
         {historyFailed && <p className="chat-panel-note">{HISTORY_ERROR_MESSAGE}</p>}
         {!isLoadingHistory && !historyFailed && messages.length === 0 && (
           <p className="chat-panel-note">No messages yet.</p>
