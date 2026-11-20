@@ -5,12 +5,14 @@ import html
 import math
 import re
 import time
+from collections.abc import Iterator
 from typing import Literal, get_args
 
 import httpx2
 from openai import AuthenticationError, OpenAI, OpenAIError, RateLimitError
 from openai.types.responses import ParsedResponse
 from pydantic import BaseModel, ValidationError
+from pydantic_core import from_json
 
 from app.settings import Settings
 
@@ -37,6 +39,10 @@ ReplyKind = Literal["casual", "grounded", "no_evidence"]
 
 # Long enough to see the chat panel's thinking state when using the fake LLM.
 FAKE_REPLY_DELAY_SECONDS = 1
+
+# How many characters of its JSON reply the fake sends at a time when streaming. Small
+# enough that the answer visibly grows over several pieces.
+FAKE_STREAM_PIECE_CHARACTERS = 6
 
 # How many texts go in one embedding request. OpenAI accepts up to 2,048, so this keeps
 # each request small, and a failure part way through loses little.
@@ -68,13 +74,85 @@ class ChatMessage(BaseModel):
 
 
 class NpcReply(BaseModel):
-    """The structured reply the model must return. ARCHITECTURE.md explains each field."""
+    """The structured reply the model must return. ARCHITECTURE.md explains each field.
+
+    The model writes the fields in this order. Sources come before the answer, so while a
+    reply streams the server already knows what it cites before any answer text is shown.
+    """
 
     kind: ReplyKind
-    answer: str
     citation_ids: list[str]
+    answer: str
     referral_npc_id: str | None
     referral_reason: str | None
+
+
+class PartialReply(BaseModel):
+    """The fields of a reply the model is still writing. Missing fields are not written yet.
+
+    kind is a plain string because it may be cut off part way, such as "groun".
+    """
+
+    kind: str | None = None
+    citation_ids: list[str] = []
+    answer: str | None = None  # None until the model starts writing the answer.
+
+
+def read_partial_reply(partial_json: str) -> PartialReply:
+    """Read what the model has written so far of its JSON reply.
+
+    Input: the reply text received so far, possibly cut off anywhere.
+    Output: the fields readable so far. A string cut off part way, even inside an escape
+    such as \\u00e9, gives the part before the cut, so each reading of the answer starts
+    with the previous one. Once the answer has started, kind and citation_ids are
+    complete, because the model writes them first (see NpcReply). Text that can't be read
+    yet, or isn't a JSON object, gives an empty PartialReply.
+    """
+    try:
+        fields = from_json(partial_json, allow_partial="trailing-strings")
+    except ValueError:
+        return PartialReply()
+    if not isinstance(fields, dict):
+        return PartialReply()
+    try:
+        return PartialReply.model_validate(fields)
+    except ValidationError:
+        return PartialReply()
+
+
+class AnswerPiece(BaseModel):
+    """A new piece of the answer, sent while the model is still writing.
+
+    kind and citation_ids are complete, because the model writes them before the answer,
+    so the server can check the sources before showing any of the answer.
+    """
+
+    text: str
+    kind: str | None
+    citation_ids: list[str]
+
+
+def next_answer_piece(reply_so_far: str, answer_sent: str) -> AnswerPiece | None:
+    """Find the part of the answer that hasn't been sent yet.
+
+    Args:
+        reply_so_far: The JSON reply text received so far.
+        answer_sent: The answer text already sent, joined together.
+
+    Returns:
+        The new part of the answer, or None if the answer hasn't grown.
+    """
+    partial = read_partial_reply(reply_so_far)
+    if partial.answer is None or len(partial.answer) <= len(answer_sent):
+        return None
+
+    # Each reading starts with the one before (see read_partial_reply), so the new
+    # part is whatever comes after the text already sent.
+    return AnswerPiece(
+        text=partial.answer[len(answer_sent) :],
+        kind=partial.kind,
+        citation_ids=partial.citation_ids,
+    )
 
 
 class TokenUsage(BaseModel):
@@ -143,6 +221,27 @@ def read_token_usage(response: ParsedResponse[NpcReply]) -> TokenUsage | None:
     )
 
 
+def finish_reply(response: ParsedResponse[NpcReply]) -> GeneratedReply:
+    """Check a finished OpenAI response holds a usable reply.
+
+    Args:
+        response: The parsed response returned by the SDK.
+
+    Returns:
+        The reply and the tokens it used.
+
+    Raises:
+        LlmError: With llm_bad_reply if there is no reply, or its answer is blank.
+    """
+    reply = response.output_parsed
+
+    # A refusal has no parsed reply, and a blank answer would look like a silent NPC.
+    if reply is None or not reply.answer.strip():
+        raise LlmError("llm_bad_reply")
+
+    return GeneratedReply(reply=reply, usage=read_token_usage(response))
+
+
 class OpenAiLlm:
     """Gets NPC replies and embeddings from OpenAI."""
 
@@ -184,29 +283,88 @@ class OpenAiLlm:
             raise LlmError("llm_not_configured")
 
         try:
-            response = self.client.responses.parse(
-                model=self.settings.openai_chat_model,
-                reasoning={"effort": self.settings.openai_reasoning_effort},
-                instructions=instructions,
-                input=[message.model_dump() for message in messages],
-                text_format=NpcReply,
-                max_output_tokens=MAX_OUTPUT_TOKENS,
-                # Conversations are saved locally, so OpenAI has no need to keep a copy.
-                store=False,
-            )
+            response = self.client.responses.parse(**self.reply_request(instructions, messages))
         except OpenAIError as error:
             raise error_from_openai(error) from error
         except ValidationError as error:
             # A reply cut off by the token limit is broken JSON, which lands here.
             raise LlmError("llm_bad_reply") from error
 
-        reply = response.output_parsed
+        return finish_reply(response)
 
-        # A refusal has no parsed reply, and a blank answer would look like a silent NPC.
-        if reply is None or not reply.answer.strip():
-            raise LlmError("llm_bad_reply")
+    def stream_reply(
+        self, instructions: str, messages: list[ChatMessage]
+    ) -> Iterator[AnswerPiece | GeneratedReply]:
+        """Ask the model for one structured reply, and pass on its answer as it is written.
 
-        return GeneratedReply(reply=reply, usage=read_token_usage(response))
+        Args:
+            instructions: The rules and personality the model must follow.
+            messages: The conversation so far, ending with the visitor's new message.
+
+        Yields:
+            An AnswerPiece each time the answer grows, then the finished GeneratedReply,
+            the same as generate_reply returns.
+
+        Raises:
+            LlmError: If no usable reply was produced, even after some pieces were sent.
+        """
+        if self.client is None:
+            raise LlmError("llm_not_configured")
+
+        try:
+            request = self.reply_request(instructions, messages)
+            with self.client.responses.stream(**request) as stream:
+                answer_sent = ""
+                for event in stream:
+                    if event.type == "response.output_text.delta":
+                        # snapshot is the whole reply text received so far.
+                        piece = next_answer_piece(event.snapshot, answer_sent)
+                        if piece is not None:
+                            answer_sent += piece.text
+                            yield piece
+                    elif event.type == "response.completed":
+                        yield finish_reply(event.response)
+                        return
+                    elif event.type == "response.incomplete":
+                        # Usually the token limit, which cuts the JSON off.
+                        raise LlmError("llm_bad_reply")
+                    elif event.type in ("response.failed", "error"):
+                        raise LlmError("llm_unavailable")
+        except OpenAIError as error:
+            # Includes an error OpenAI sends part way through the stream.
+            raise error_from_openai(error) from error
+        except httpx2.HTTPError as error:
+            # The connection broke or timed out part way through.
+            raise LlmError("llm_unavailable") from error
+        except ValidationError as error:
+            raise LlmError("llm_bad_reply") from error
+        except RuntimeError as error:
+            # The SDK raises this when the stream's events arrive out of order.
+            raise LlmError("llm_unavailable") from error
+
+        # The stream ended without saying the reply was finished.
+        raise LlmError("llm_unavailable")
+
+    def reply_request(self, instructions: str, messages: list[ChatMessage]) -> dict:
+        """Build the request settings shared by generate_reply and stream_reply.
+
+        Args:
+            instructions: The rules and personality the model must follow.
+            messages: The conversation so far, ending with the visitor's new message.
+
+        Returns:
+            Keyword arguments for the SDK's responses.parse or responses.stream.
+        """
+        return {
+            "model": self.settings.openai_chat_model,
+            "reasoning": {"effort": self.settings.openai_reasoning_effort},
+            "instructions": instructions,
+            "input": [message.model_dump() for message in messages],
+            "text_format": NpcReply,
+            "max_output_tokens": MAX_OUTPUT_TOKENS,
+            # Conversations are saved locally, so OpenAI has no need to keep a copy.
+            "store": False,
+        }
 
     def embed_texts(self, texts: list[str]) -> EmbeddedTexts:
         """Turn texts into embedding vectors, so similar meanings can be found by search.
@@ -293,6 +451,40 @@ def find_passage_ids(messages: list[ChatMessage]) -> list[str]:
     return passage_ids
 
 
+def build_fake_reply(messages: list[ChatMessage]) -> NpcReply:
+    """Build the fake's reply, which repeats the visitor's message.
+
+    Args:
+        messages: The conversation so far, ending with the visitor's new message.
+
+    Returns:
+        A grounded reply citing every passage when the server sent passages, and a
+        casual one otherwise. Either way it is labelled as fake.
+    """
+    visitor_message = messages[-1].content.strip()
+
+    # Cite every passage the server found, so citations can be tried at no cost.
+    # The fake can't tell whether they answer the question, but the real model can.
+    passage_ids = find_passage_ids(messages[:-1])
+    if passage_ids:
+        found = f"Found {len(passage_ids)} passages."
+        return NpcReply(
+            kind="grounded",
+            answer=f"[Fake reply] {found} You said: {visitor_message}",
+            citation_ids=passage_ids,
+            referral_npc_id=None,
+            referral_reason=None,
+        )
+
+    return NpcReply(
+        kind="casual",
+        answer=f"[Fake reply] You said: {visitor_message}",
+        citation_ids=[],
+        referral_npc_id=None,
+        referral_reason=None,
+    )
+
+
 class FakeLlm:
     """Stands in for OpenAI, so chat and search can be built and tested with no key and no cost.
 
@@ -328,37 +520,76 @@ class FakeLlm:
             LlmError: If the message is an error code that did not just fail.
         """
         time.sleep(self.reply_delay_seconds)
+
+        error_code = self.take_error_to_try(messages)
+        if error_code is not None:
+            raise LlmError(error_code)
+
+        # Zero is the true count here: the fake spends nothing.
+        reply = build_fake_reply(messages)
+        return GeneratedReply(reply=reply, usage=TokenUsage(input_tokens=0, output_tokens=0))
+
+    def stream_reply(
+        self, instructions: str, messages: list[ChatMessage]
+    ) -> Iterator[AnswerPiece | GeneratedReply]:
+        """Stream like OpenAiLlm.stream_reply, without any network call.
+
+        The reply is the same as generate_reply's. Its JSON is sent a few characters at a
+        time, spread over reply_delay_seconds, and read the same way as a real one.
+
+        Args:
+            instructions: Accepted to match the real method, and not used.
+            messages: The conversation so far, ending with the visitor's new message.
+
+        Yields:
+            An AnswerPiece each time the answer grows, then the finished GeneratedReply.
+
+        Raises:
+            LlmError: If the message is an error code that did not just fail. The first
+                piece of the answer is sent before the error, so a failure part way
+                through a reply can be tried.
+        """
+        error_code = self.take_error_to_try(messages)
+        reply_json = build_fake_reply(messages).model_dump_json()
+
+        # Where each piece ends. The last piece ends with the whole reply.
+        step = FAKE_STREAM_PIECE_CHARACTERS
+        piece_ends = [*range(step, len(reply_json), step), len(reply_json)]
+        pause_seconds = self.reply_delay_seconds / len(piece_ends)
+
+        answer_sent = ""
+        for end in piece_ends:
+            time.sleep(pause_seconds)
+            piece = next_answer_piece(reply_json[:end], answer_sent)
+            if piece is None:
+                continue
+
+            answer_sent += piece.text
+            yield piece
+            if error_code is not None:
+                raise LlmError(error_code)
+
+        reply = NpcReply.model_validate_json(reply_json)
+        yield GeneratedReply(reply=reply, usage=TokenUsage(input_tokens=0, output_tokens=0))
+
+    def take_error_to_try(self, messages: list[ChatMessage]) -> LlmErrorCode | None:
+        """Decide whether this message asks the fake to fail.
+
+        Args:
+            messages: The conversation so far, ending with the visitor's new message.
+
+        Returns:
+            The error code to fail with, or None to reply normally. A code that just
+            failed returns None, so a retry succeeds.
+        """
         visitor_message = messages[-1].content.strip()
 
         if visitor_message in get_args(LlmErrorCode) and visitor_message != self.last_failed_code:
             self.last_failed_code = visitor_message
-            raise LlmError(visitor_message)
+            return visitor_message
 
         self.last_failed_code = None
-
-        # Cite every passage the server found, so citations can be tried at no cost.
-        # The fake can't tell whether they answer the question, but the real model can.
-        passage_ids = find_passage_ids(messages[:-1])
-        if passage_ids:
-            found = f"Found {len(passage_ids)} passages."
-            reply = NpcReply(
-                kind="grounded",
-                answer=f"[Fake reply] {found} You said: {visitor_message}",
-                citation_ids=passage_ids,
-                referral_npc_id=None,
-                referral_reason=None,
-            )
-        else:
-            reply = NpcReply(
-                kind="casual",
-                answer=f"[Fake reply] You said: {visitor_message}",
-                citation_ids=[],
-                referral_npc_id=None,
-                referral_reason=None,
-            )
-
-        # Zero is the true count here: the fake spends nothing.
-        return GeneratedReply(reply=reply, usage=TokenUsage(input_tokens=0, output_tokens=0))
+        return None
 
     def embed_texts(self, texts: list[str]) -> EmbeddedTexts:
         """Embed like OpenAiLlm.embed_texts, using word counts instead of a model.
@@ -381,7 +612,7 @@ def create_llm(settings: Settings) -> OpenAiLlm | FakeLlm:
         settings: use_fake_llm picks the fake. The real LLM is the default.
 
     Returns:
-        An object with generate_reply and embed_texts methods.
+        An object with generate_reply, stream_reply, and embed_texts methods.
     """
     if settings.use_fake_llm:
         return FakeLlm(reply_delay_seconds=FAKE_REPLY_DELAY_SECONDS)

@@ -1,14 +1,16 @@
 """Loreland API entry point: creates the FastAPI app and registers its routes."""
 
+import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, Header, Path, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from app.chat import (
@@ -21,9 +23,18 @@ from app.chat import (
     build_messages,
     build_search_text,
 )
-from app.citations import check_reply
+from app.citations import check_reply, find_valid_citations
 from app.ingest import SearchIndex
-from app.llm import FakeLlm, LlmError, OpenAiLlm, TokenUsage, create_llm
+from app.llm import (
+    AnswerPiece,
+    ChatMessage,
+    FakeLlm,
+    GeneratedReply,
+    LlmError,
+    OpenAiLlm,
+    TokenUsage,
+    create_llm,
+)
 from app.npcs import (
     SAFE_ID_PATTERN,
     NpcConfig,
@@ -33,7 +44,7 @@ from app.npcs import (
     load_npcs,
 )
 from app.referrals import check_referral, drop_referral_back
-from app.retrieval import load_indexes, search_index
+from app.retrieval import RetrievedPassage, load_indexes, search_index
 from app.settings import Settings
 from app.storage import ConversationStore, SavedMessage
 
@@ -197,6 +208,178 @@ def read_npcs(npcs: Annotated[list[NpcConfig], Depends(get_npcs)]) -> list[Publi
     return list_public_npcs(npcs)
 
 
+@dataclass
+class PreparedChat:
+    """Everything a chat message needs before the model is asked, from prepare_chat."""
+
+    npc: NpcConfig
+    all_npcs: list[NpcConfig]
+    visitor_id: UUID
+    visitor_message: str
+    passages: list[RetrievedPassage]  # Found for this message. Only these may be cited.
+    instructions: str
+    messages: list[ChatMessage]
+
+
+def prepare_chat(
+    chat_request: ChatRequest,
+    visitor_id: UUID,
+    npcs: list[NpcConfig],
+    llm: OpenAiLlm | FakeLlm,
+    indexes: dict[str, SearchIndex],
+    store: ConversationStore,
+    settings: Settings,
+) -> PreparedChat:
+    """Do the steps before the model is asked: find the NPC, search, and build the prompt.
+
+    Shared by POST /api/chat and POST /api/chat/stream, so both follow the same rules.
+
+    Args:
+        chat_request: The NPC's ID and the visitor's message.
+        visitor_id: The anonymous ID the browser created.
+        npcs: The configured NPCs.
+        llm: Embeds the search text.
+        indexes: The search index of each NPC, keyed by knowledge base ID.
+        store: Where earlier messages are read from.
+        settings: For how many earlier messages to send.
+
+    Returns:
+        The NPC, the passages found, and the instructions and messages for the model.
+
+    Raises:
+        NpcNotFoundError: If the NPC does not exist or is disabled.
+        KnowledgeNotReadyError: If the NPC's search index is not loaded.
+        LlmError: If the search text could not be embedded.
+    """
+    npc = find_enabled_npc(npcs, chat_request.npc_id)
+    if npc is None:
+        raise NpcNotFoundError
+
+    # The knowledge base comes from configuration, never from the browser, so a visitor
+    # can only ever search the documents of the NPC they are talking to.
+    index = indexes.get(npc.knowledge_base_id)
+    if index is None:
+        raise KnowledgeNotReadyError
+
+    # Only this visitor's recent messages with this NPC, so the NPC can follow the
+    # conversation without seeing anyone else's, and the cost per message stays small.
+    earlier_messages = store.load_messages(
+        visitor_id, npc.id, limit=settings.conversation_context_messages
+    )
+
+    # The previous message helps a short follow-up find the passages it is about.
+    search_text = build_search_text(chat_request.message, earlier_messages)
+    passages = search_index(index, search_text, llm)
+
+    return PreparedChat(
+        npc=npc,
+        all_npcs=npcs,
+        visitor_id=visitor_id,
+        visitor_message=chat_request.message,
+        passages=passages,
+        instructions=build_instructions(npc, npcs),
+        messages=build_messages(chat_request.message, passages, earlier_messages),
+    )
+
+
+def finish_chat(
+    chat: PreparedChat, generated: GeneratedReply, store: ConversationStore
+) -> ChatResponse:
+    """Do the steps after the model replies: check the reply, save it, and build the response.
+
+    Shared by POST /api/chat and POST /api/chat/stream, so both follow the same rules.
+
+    Args:
+        chat: What prepare_chat returned for this message.
+        generated: The model's reply and what it cost.
+        store: Where the exchange is saved.
+
+    Returns:
+        The NPC's answer, with citations and a referral the server has checked.
+    """
+    npc = chat.npc
+    log_token_usage(npc.id, generated.usage)
+
+    checked = check_reply(npc, generated.reply, chat.passages)
+    referral = check_referral(npc, generated.reply, chat.all_npcs)
+    if referral is not None:
+        # Checked before saving, so a dropped referral is never restored later either.
+        target_last_referral = store.load_last_referral(chat.visitor_id, referral.npc_id)
+        referral = drop_referral_back(npc, referral, target_last_referral)
+
+    # Saved only once the reply is checked, so what is restored later is exactly what
+    # the visitor saw, and a failed reply saves nothing.
+    store.save_exchange(
+        chat.visitor_id,
+        npc.id,
+        chat.visitor_message,
+        checked.answer,
+        checked.citations,
+        referral,
+    )
+
+    return ChatResponse(answer=checked.answer, citations=checked.citations, referral=referral)
+
+
+def may_show_answer(piece: AnswerPiece, passages: list[RetrievedPassage]) -> bool:
+    """Decide from the first piece of a streamed answer whether any of it may be shown.
+
+    A grounded answer with no valid citation will be replaced by the NPC's
+    no_evidence_message (see check_reply), so none of it may show, even for a moment.
+
+    Args:
+        piece: The first piece of the answer. Its kind and sources are complete.
+        passages: The passages found for this message.
+
+    Returns:
+        True if the answer may be shown as it streams.
+    """
+    if piece.kind == "grounded":
+        return bool(find_valid_citations(piece.citation_ids, passages))
+
+    # An unknown kind fails the final check anyway, so it is held back too.
+    return piece.kind in ("casual", "no_evidence")
+
+
+def ndjson_line(content: dict) -> str:
+    """Write one line of a streamed reply: a JSON object followed by a new line."""
+    return json.dumps(content) + "\n"
+
+
+def stream_chat_lines(
+    chat: PreparedChat, llm: OpenAiLlm | FakeLlm, store: ConversationStore
+) -> Iterator[str]:
+    """Ask the model for a reply, and turn it into the lines of POST /api/chat/stream.
+
+    ARCHITECTURE.md lists the line types.
+
+    Args:
+        chat: What prepare_chat returned for this message.
+        llm: What produces the reply.
+        store: Where the exchange is saved once the reply is checked.
+
+    Yields:
+        An answer_text line for each new piece of an answer that may be shown, then
+        either the checked reply or an error.
+    """
+    answer_may_show = None  # Decided once, when the first piece arrives.
+
+    try:
+        for item in llm.stream_reply(chat.instructions, chat.messages):
+            if isinstance(item, AnswerPiece):
+                if answer_may_show is None:
+                    answer_may_show = may_show_answer(item, chat.passages)
+                if answer_may_show:
+                    yield ndjson_line({"type": "answer_text", "text": item.text})
+            else:
+                response = finish_chat(chat, item, store)
+                yield ndjson_line({"type": "reply", "reply": response.model_dump(mode="json")})
+    except LlmError as error:
+        # The response has already started, so the error goes in a line, not a status.
+        error_content = {"code": error.code, "message": LLM_ERROR_MESSAGES[error.code]}
+        yield ndjson_line({"type": "error", "error": error_content})
+
+
 # A plain def, not async: FastAPI then runs it on a worker thread, so a slow LLM call
 # doesn't stop the server from answering other requests.
 @app.post("/api/chat")
@@ -229,44 +412,37 @@ def send_chat_message(
         KnowledgeNotReadyError: If the NPC's search index is not loaded.
         LlmError: If the search text could not be embedded, or no usable reply was produced.
     """
-    npc = find_enabled_npc(npcs, chat_request.npc_id)
-    if npc is None:
-        raise NpcNotFoundError
+    chat = prepare_chat(chat_request, visitor_id, npcs, llm, indexes, store, settings)
+    generated = llm.generate_reply(chat.instructions, chat.messages)
 
-    # The knowledge base comes from configuration, never from the browser, so a visitor
-    # can only ever search the documents of the NPC they are talking to.
-    index = indexes.get(npc.knowledge_base_id)
-    if index is None:
-        raise KnowledgeNotReadyError
+    return finish_chat(chat, generated, store)
 
-    # Only this visitor's recent messages with this NPC, so the NPC can follow the
-    # conversation without seeing anyone else's, and the cost per message stays small.
-    earlier_messages = store.load_messages(
-        visitor_id, npc.id, limit=settings.conversation_context_messages
-    )
 
-    # The previous message helps a short follow-up find the passages it is about.
-    search_text = build_search_text(chat_request.message, earlier_messages)
-    passages = search_index(index, search_text, llm)
+@app.post("/api/chat/stream")
+def stream_chat_message(
+    chat_request: ChatRequest,
+    visitor_id: Annotated[UUID, Header(alias="X-Visitor-Id")],
+    npcs: Annotated[list[NpcConfig], Depends(get_npcs)],
+    llm: Annotated[OpenAiLlm | FakeLlm, Depends(get_llm)],
+    indexes: Annotated[dict[str, SearchIndex], Depends(get_indexes)],
+    store: Annotated[ConversationStore, Depends(get_store)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> StreamingResponse:
+    """Like POST /api/chat, but the answer is sent piece by piece as the model writes it.
 
-    messages = build_messages(chat_request.message, passages, earlier_messages)
-    generated = llm.generate_reply(build_instructions(npc, npcs), messages)
-    log_token_usage(npc.id, generated.usage)
+    The response is NDJSON: one JSON object per line. ARCHITECTURE.md lists the lines.
+    The arguments are the same as send_chat_message's.
 
-    checked = check_reply(npc, generated.reply, passages)
-    referral = check_referral(npc, generated.reply, npcs)
-    if referral is not None:
-        # Checked before saving, so a dropped referral is never restored later either.
-        target_last_referral = store.load_last_referral(visitor_id, referral.npc_id)
-        referral = drop_referral_back(npc, referral, target_last_referral)
+    Returns:
+        A stream of lines that ends with the checked reply, or with an error.
 
-    # Saved only once the reply is checked, so what is restored later is exactly what
-    # the visitor saw, and a failed reply saves nothing.
-    store.save_exchange(
-        visitor_id, npc.id, chat_request.message, checked.answer, checked.citations, referral
-    )
+    Raises:
+        NpcNotFoundError, KnowledgeNotReadyError, or LlmError: Before the stream starts,
+            the same as POST /api/chat, so they keep their normal status and shape.
+    """
+    chat = prepare_chat(chat_request, visitor_id, npcs, llm, indexes, store, settings)
 
-    return ChatResponse(answer=checked.answer, citations=checked.citations, referral=referral)
+    return StreamingResponse(stream_chat_lines(chat, llm, store), media_type="application/x-ndjson")
 
 
 @app.get("/api/conversations/{npc_id}")

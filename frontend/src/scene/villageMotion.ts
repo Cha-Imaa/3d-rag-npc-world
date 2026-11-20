@@ -88,6 +88,25 @@ export function idleBobOffset(npcId: string): number {
   return ((hash % 1000) / 1000) * IDLE_BOB_SECONDS
 }
 
+/** How much bigger the marker over a thinking NPC grows at the top of its pulse. 0.3 is 30%. */
+export const THINKING_PULSE_GROWTH = 0.3
+
+/** Seconds for one full grow and shrink. Quicker than the idle bob, so it reads as busy. */
+export const THINKING_PULSE_SECONDS = 0.9
+
+/**
+ * Work out the marker's size while its NPC prepares a reply.
+ * The pulse starts at normal size, so the marker doesn't jump when thinking begins.
+ * Input: seconds since the reply was requested.
+ * Output: a scale between 1 and 1 + THINKING_PULSE_GROWTH.
+ */
+export function thinkingPulseScale(elapsedSeconds: number): number {
+  const angle = (elapsedSeconds / THINKING_PULSE_SECONDS) * Math.PI * 2
+
+  // The same smooth 0-to-1-and-back curve as the idle bob.
+  return 1 + (THINKING_PULSE_GROWTH * (1 - Math.cos(angle))) / 2
+}
+
 /**
  * Check whether the visitor has asked their device to reduce motion.
  * Output: true if the village should stay still.

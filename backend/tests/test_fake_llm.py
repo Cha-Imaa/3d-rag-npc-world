@@ -8,8 +8,10 @@ from app.ingest import Chunk
 from app.llm import (
     FAKE_EMBEDDING_DIMENSIONS,
     FAKE_REPLY_DELAY_SECONDS,
+    AnswerPiece,
     ChatMessage,
     FakeLlm,
+    GeneratedReply,
     LlmError,
     OpenAiLlm,
     TokenUsage,
@@ -122,6 +124,61 @@ def test_a_different_code_still_fails_after_a_failure() -> None:
     code_of_failed_reply(llm, "llm_unavailable")
 
     assert code_of_failed_reply(llm, "llm_bad_reply") == "llm_bad_reply"
+
+
+def test_a_streamed_reply_arrives_in_pieces_and_ends_with_the_whole_reply() -> None:
+    messages = visitor_says("What do you do here?")
+
+    *pieces, final = FakeLlm().stream_reply("Test instructions", messages)
+
+    assert len(pieces) > 1
+    assert all(isinstance(piece, AnswerPiece) for piece in pieces)
+    assert isinstance(final, GeneratedReply)
+    assert final == FakeLlm().generate_reply("Test instructions", messages)
+    assert "".join(piece.text for piece in pieces) == final.reply.answer
+
+
+def test_each_streamed_piece_carries_the_sources_chosen_before_the_answer() -> None:
+    passage = RetrievedPassage(
+        chunk=Chunk(
+            id="notes.txt#1",
+            source_file="notes.txt",
+            title="Notes",
+            page=None,
+            section=None,
+            text="Some text.",
+        ),
+        score=0.5,
+    )
+    messages = build_messages("How deep is the well?", [passage])
+
+    *pieces, _final = FakeLlm().stream_reply("Test instructions", messages)
+
+    for piece in pieces:
+        assert piece.kind == "grounded"
+        assert piece.citation_ids == ["notes.txt#1"]
+
+
+def test_a_streamed_error_code_fails_after_the_answer_has_started() -> None:
+    received = []
+
+    with pytest.raises(LlmError) as error_info:
+        for item in FakeLlm().stream_reply("Test instructions", visitor_says("llm_unavailable")):
+            received.append(item)
+
+    assert error_info.value.code == "llm_unavailable"
+    assert len(received) == 1
+    assert isinstance(received[0], AnswerPiece)
+
+
+def test_a_streamed_retry_of_the_same_code_succeeds() -> None:
+    llm = FakeLlm()
+    with pytest.raises(LlmError):
+        list(llm.stream_reply("Test instructions", visitor_says("llm_unavailable")))
+
+    *_pieces, final = llm.stream_reply("Test instructions", visitor_says("llm_unavailable"))
+
+    assert final.reply.kind == "casual"
 
 
 def test_the_setting_chooses_the_fake_with_a_visible_delay() -> None:

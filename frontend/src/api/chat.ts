@@ -24,7 +24,7 @@ export type Referral = {
   reason: string
 }
 
-/** An NPC's reply, as sent by POST /api/chat. */
+/** An NPC's reply, as sent by POST /api/chat, and at the end of POST /api/chat/stream. */
 export type ChatReply = {
   answer: string
   citations: Citation[]
@@ -100,22 +100,98 @@ async function requestAsVisitor(path: string, options: RequestInit = {}): Promis
   return response
 }
 
+/** One line of POST /api/chat/stream. ARCHITECTURE.md describes each type. */
+type StreamLine =
+  | { type: 'answer_text'; text: string }
+  | { type: 'reply'; reply: ChatReply }
+  | { type: 'error'; error: { code: string; message: string } }
+
 /**
- * Send the visitor's message to an NPC.
+ * Read a response body one line at a time, as each line arrives.
+ *
+ * @param body the response body, which may arrive in pieces that split a line, or a letter.
+ * @returns each non-blank line, without its line break.
+ */
+async function* readLines(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+  const reader = body.getReader()
+  // With stream: true, a letter split between two pieces is held until it is complete.
+  const decoder = new TextDecoder()
+  let unfinishedLine = ''
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) {
+        break
+      }
+
+      unfinishedLine += decoder.decode(value, { stream: true })
+      const lines = unfinishedLine.split('\n')
+      // The last part has no line break after it yet, so more of it may still come.
+      unfinishedLine = lines.pop() ?? ''
+      yield* lines.filter((line) => line.trim() !== '')
+    }
+
+    unfinishedLine += decoder.decode()
+    if (unfinishedLine.trim() !== '') {
+      yield unfinishedLine
+    }
+  } finally {
+    // Runs also when the caller stops early, at the reply or an error line. Cancelling
+    // stops the download, so the connection isn't held open. A broken body refuses to
+    // cancel, which is fine, since it has stopped already.
+    reader.cancel().catch(() => {})
+  }
+}
+
+/**
+ * Send the visitor's message to an NPC, and receive the answer while it is written.
  *
  * @param npcId the NPC being talked to.
  * @param message the visitor's message.
- * @returns the NPC's reply.
- * @throws ChatError if no reply came back, so a failure can never look like an answer.
+ * @param onAnswerText called with each new piece of the answer, in order. The server
+ *   sends no pieces for an answer it will replace, such as one without valid sources.
+ * @returns the checked reply, which is what was saved. It replaces the pieces.
+ * @throws ChatError if no reply came back, even after some pieces arrived, so a failure
+ *   can never look like an answer.
  */
-export async function sendChatMessage(npcId: string, message: string): Promise<ChatReply> {
-  const response = await requestAsVisitor('/api/chat', {
+export async function streamChatMessage(
+  npcId: string,
+  message: string,
+  onAnswerText: (text: string) => void,
+): Promise<ChatReply> {
+  const response = await requestAsVisitor('/api/chat/stream', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ npc_id: npcId, message }),
   })
 
-  return response.json()
+  if (response.body === null) {
+    throw new ChatError(UNREACHABLE_CODE, UNREACHABLE_MESSAGE)
+  }
+
+  try {
+    for await (const line of readLines(response.body)) {
+      const streamLine: StreamLine = JSON.parse(line)
+
+      if (streamLine.type === 'answer_text') {
+        onAnswerText(streamLine.text)
+      } else if (streamLine.type === 'reply') {
+        return streamLine.reply
+      } else if (streamLine.type === 'error') {
+        throw new ChatError(streamLine.error.code, streamLine.error.message)
+      }
+    }
+  } catch (error) {
+    if (error instanceof ChatError) {
+      throw error
+    }
+    // The connection broke part way, or a line couldn't be read.
+    throw new ChatError(UNREACHABLE_CODE, UNREACHABLE_MESSAGE)
+  }
+
+  // The stream ended without a reply, so the connection was cut before the end.
+  throw new ChatError(UNREACHABLE_CODE, UNREACHABLE_MESSAGE)
 }
 
 /**

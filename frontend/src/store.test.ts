@@ -15,6 +15,7 @@ beforeEach(() => {
     npcListStatus: 'loading',
     nearbyNpcId: null,
     talkingNpcId: null,
+    replyingNpcId: null,
   })
 })
 
@@ -78,5 +79,23 @@ describe('talking', () => {
 
     useVillageStore.getState().setNearbyNpc(null)
     expect(selectNearbyNpc(useVillageStore.getState())).toBeNull()
+  })
+})
+
+describe('replying', () => {
+  it('tracks the NPC preparing a reply until it finishes', () => {
+    useVillageStore.getState().startReplying(NPC.id)
+    expect(useVillageStore.getState().replyingNpcId).toBe(NPC.id)
+
+    useVillageStore.getState().finishReplying(NPC.id)
+    expect(useVillageStore.getState().replyingNpcId).toBeNull()
+  })
+
+  it("does not end another NPC's reply", () => {
+    useVillageStore.getState().startReplying('other-npc')
+
+    useVillageStore.getState().finishReplying(NPC.id)
+
+    expect(useVillageStore.getState().replyingNpcId).toBe('other-npc')
   })
 })

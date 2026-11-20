@@ -8,6 +8,9 @@ import {
   idleBobOffset,
   prefersReducedMotion,
   SPINNING_PARTS,
+  THINKING_PULSE_GROWTH,
+  THINKING_PULSE_SECONDS,
+  thinkingPulseScale,
 } from './villageMotion'
 
 describe('driftedPosition', () => {
@@ -66,6 +69,29 @@ describe('idleBobOffset', () => {
 
       expect(offset).toBeGreaterThanOrEqual(0)
       expect(offset).toBeLessThan(IDLE_BOB_SECONDS)
+    }
+  })
+})
+
+describe('thinkingPulseScale', () => {
+  it('starts at normal size, so the marker does not jump', () => {
+    expect(thinkingPulseScale(0)).toBeCloseTo(1)
+  })
+
+  it('is largest halfway through a pulse', () => {
+    expect(thinkingPulseScale(THINKING_PULSE_SECONDS / 2)).toBeCloseTo(1 + THINKING_PULSE_GROWTH)
+  })
+
+  it('is back to normal size after a full pulse', () => {
+    expect(thinkingPulseScale(THINKING_PULSE_SECONDS)).toBeCloseTo(1)
+  })
+
+  it('never shrinks the marker or grows it past the limit', () => {
+    for (let seconds = 0; seconds < 5; seconds += 0.13) {
+      const scale = thinkingPulseScale(seconds)
+
+      expect(scale).toBeGreaterThanOrEqual(1)
+      expect(scale).toBeLessThanOrEqual(1 + THINKING_PULSE_GROWTH + 1e-9)
     }
   })
 })
