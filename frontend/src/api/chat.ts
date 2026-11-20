@@ -118,22 +118,29 @@ async function* readLines(body: ReadableStream<Uint8Array>): AsyncGenerator<stri
   const decoder = new TextDecoder()
   let unfinishedLine = ''
 
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) {
-      break
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) {
+        break
+      }
+
+      unfinishedLine += decoder.decode(value, { stream: true })
+      const lines = unfinishedLine.split('\n')
+      // The last part has no line break after it yet, so more of it may still come.
+      unfinishedLine = lines.pop() ?? ''
+      yield* lines.filter((line) => line.trim() !== '')
     }
 
-    unfinishedLine += decoder.decode(value, { stream: true })
-    const lines = unfinishedLine.split('\n')
-    // The last part has no line break after it yet, so more of it may still come.
-    unfinishedLine = lines.pop() ?? ''
-    yield* lines.filter((line) => line.trim() !== '')
-  }
-
-  unfinishedLine += decoder.decode()
-  if (unfinishedLine.trim() !== '') {
-    yield unfinishedLine
+    unfinishedLine += decoder.decode()
+    if (unfinishedLine.trim() !== '') {
+      yield unfinishedLine
+    }
+  } finally {
+    // Runs also when the caller stops early, at the reply or an error line. Cancelling
+    // stops the download, so the connection isn't held open. A broken body refuses to
+    // cancel, which is fine, since it has stopped already.
+    reader.cancel().catch(() => {})
   }
 }
 

@@ -156,6 +156,28 @@ describe('streamChatMessage', () => {
     expect((result as ChatError).code).toBe('server_unreachable')
   })
 
+  it.each([
+    ['reply', line({ type: 'reply', reply: REPLY })],
+    ['error', line({ type: 'error', error: { code: 'llm_unavailable', message: 'Down.' } })],
+  ])('stops downloading once the %s line arrives, even if the body stays open', async (
+    _name,
+    lastLine,
+  ) => {
+    const cancelDownload = vi.fn()
+    // A body that sends its line and then never ends, so only cancelling closes it.
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(lastLine))
+      },
+      cancel: cancelDownload,
+    })
+    fetchMock.mockResolvedValue(new Response(body, { status: 200 }))
+
+    await streamAndCollect()
+
+    expect(cancelDownload).toHaveBeenCalledOnce()
+  })
+
   it('reports a plain error when a line is not readable', async () => {
     fetchMock.mockResolvedValue(streamResponse(['not json\n']))
 
