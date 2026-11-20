@@ -135,29 +135,29 @@ export function ChatPanel({
     const unfinishedReply = findPendingReply(npc.id)
 
     /**
-     * Wait for any unfinished reply, then show the saved messages, or say they failed.
-     * If that reply failed, show its message and reason after them.
+     * Wait for the unfinished reply, if there is one, showing the NPC as thinking meanwhile.
+     * Output: the failed message and its reason, or null if it arrived or none was waited for.
      */
-    async function loadSavedMessages() {
-      // Set when the unfinished reply failed, so nothing was saved for it.
-      let earlierFailure: FailedReply | null = null
+    async function waitForUnfinishedReply(): Promise<FailedReply | null> {
+      if (!unfinishedReply) {
+        return null
+      }
 
-      // The server saves an exchange only once its reply is sent, so loading before then
-      // would miss it. Meanwhile the panel and the village show the NPC as thinking,
-      // and Send is off.
-      if (unfinishedReply) {
-        setIsWaitingForReply(true)
-        startReplying(npc.id)
-        earlierFailure = await unfinishedReply
+      // Send stays off meanwhile, so the visitor can't start a second reply.
+      setIsWaitingForReply(true)
+      startReplying(npc.id)
+      const failure = await unfinishedReply
 
-        // A closed panel already stopped the thinking cue when it closed.
-        if (!isPanelOpen) {
-          return
-        }
+      // A closed panel already stopped the thinking cue when it closed.
+      if (isPanelOpen) {
         setIsWaitingForReply(false)
         finishReplying(npc.id)
       }
+      return failure
+    }
 
+    /** Show the saved messages, or say they couldn't load. */
+    async function showSavedMessages() {
       try {
         const savedMessages = await loadConversation(npc.id)
 
@@ -173,20 +173,38 @@ export function ChatPanel({
           setIsLoadingHistory(false)
         }
       }
+    }
 
-      // Show the failure as the panel would have if it had stayed open: the visitor's
-      // message, the reason, and Try again. Otherwise the message would vanish unexplained.
+    /**
+     * Show a failed unfinished reply as the panel would have if it had stayed open: the
+     * visitor's message, the reason, and Try again. Otherwise the message would vanish.
+     */
+    function showEarlierFailure(failure: FailedReply) {
+      setMessages((currentMessages) => [
+        ...currentMessages,
+        { speaker: 'visitor', text: failure.message, citations: [], referral: null },
+      ])
+      setFailedSend(failure)
+    }
+
+    /** Open the conversation: wait for any unfinished reply, then show the saved messages. */
+    async function openConversation() {
+      // The server saves an exchange only once its reply is sent, so loading before then
+      // would miss it.
+      const earlierFailure = await waitForUnfinishedReply()
+      if (!isPanelOpen) {
+        return
+      }
+
+      await showSavedMessages()
+
+      // A failed reply saved nothing, so it goes after the saved messages.
       if (earlierFailure && isPanelOpen) {
-        const failedMessage = earlierFailure.message
-        setMessages((currentMessages) => [
-          ...currentMessages,
-          { speaker: 'visitor', text: failedMessage, citations: [], referral: null },
-        ])
-        setFailedSend(earlierFailure)
+        showEarlierFailure(earlierFailure)
       }
     }
 
-    loadSavedMessages()
+    openConversation()
 
     return () => {
       isPanelOpen = false
