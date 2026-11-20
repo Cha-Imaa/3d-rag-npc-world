@@ -4,12 +4,13 @@ import json
 
 from app.llm import PartialReply, read_partial_reply
 
-# A complete reply in the order the model writes it.
+# A complete reply in the order the model writes it. json.dumps escapes é as é and
+# the emoji as two halves (🌾), so cuts land inside both kinds of escape.
 FULL_REPLY = json.dumps(
     {
         "kind": "grounded",
         "citation_ids": ["guide.txt#1"],
-        "answer": 'The well is "old", and café owners use it.\nAsk me more.',
+        "answer": 'The well is "old", and café owners use it 🌾.\nAsk me more.',
         "referral_npc_id": None,
         "referral_reason": None,
     }
